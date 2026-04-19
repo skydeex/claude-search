@@ -8,8 +8,9 @@
 
 ## Как это работает
 
-- **`buildGraph.php`** — парсит PHP и JS файлы, строит граф зависимостей в SQLite (`code_graph.sqlite`). Инкрементальный: повторный запуск обновляет только изменённые файлы (~100–200 мс).
+- **`buildGraph.php`** — парсит PHP и JS файлы, строит граф зависимостей в SQLite. Инкрементальный: повторный запуск обновляет только изменённые файлы (~100–200 мс).
 - **`claudeSearch.php`** — CLI-интерфейс. Перед `graph`-запросами автоматически вызывает `buildGraph.php`.
+- **`config.php`** — единый файл настроек: корень проекта, доступ к MySQL, директории сканирования.
 - **`cs.sh`** — bash-обёртка для удобного вызова.
 
 ---
@@ -17,75 +18,78 @@
 ## Структура файлов
 
 ```
-claudeSearch/
+-claude-search/
+  config.php            — все настройки (только этот файл нужно менять)
   buildGraph.php        — оркестратор: БД, helpers, сканирование файлов
   claudeSearch.php      — CLI-интерфейс всех команд
   cs.sh                 — bash-обёртка
-  code_graph.sqlite     — SQLite-граф (генерируется buildGraph.php)
   parsers/
     php.php             — парсер PHP (классы, методы, вызовы, use)
     js.php              — парсер JS/JSX (import, компоненты, функции)
 ```
 
-Чтобы добавить новый язык — создать `parsers/go.php` с функцией `parseGo()` и добавить две строки в `buildGraph.php`:
-```php
-require_once __DIR__ . '/parsers/go.php';
-$parsers['go'] = 'parseGo';
-$scanDirs['go'] = [$rootDir . 'cmd', $rootDir . 'internal'];
-```
+SQLite-граф хранится в `cache/code_graph.sqlite` проекта (путь задаётся в `config.php`).
 
 ---
 
 ## Установка
 
-### 1. Разместить файлы
+### 1. Разместить папку
 
-Положи `claudeSearch.php`, `buildGraph.php` и `cs.sh` в удобное место внутри проекта, например `tools/` или `classes/utils/`.
+Положи папку `-claude-search/` в удобное место внутри проекта (или рядом с ним, на том же уровне).
 
-### 2. Настроить пути в `buildGraph.php`
+### 2. Отредактировать `config.php`
+
+Это **единственный файл, который нужно менять**:
 
 ```php
-$rootDir  = __DIR__ . '/../../';          // корень проекта относительно скрипта
-$dbPath   = $rootDir . 'cache/code_graph.sqlite';
+// Корень проекта относительно этого файла
+$rootDir = realpath(__DIR__ . '/../') . DIRECTORY_SEPARATOR;
 
+// MySQL (для команд schema и db)
+define('CS_DB_HOST', 'localhost');
+define('CS_DB_NAME', 'your_database');
+define('CS_DB_USER', 'claude_ro');
+define('CS_DB_PASS', '');
+
+// Путь к SQLite-графу
+$dbPath = $rootDir . 'cache/code_graph.sqlite';
+
+// Директории для индексации графа (buildGraph.php)
 $scanDirs = [
-    'php' => [
-        $rootDir . 'src',                 // PHP-директории
-        $rootDir . 'app',
-    ],
-    'js' => [
-        $rootDir . 'resources/js',        // JS/JSX-директории
-    ],
+    'php' => [$rootDir . 'src', $rootDir . 'app'],
+    'js'  => [$rootDir . 'resources/js'],
 ];
+
+// Директории для поиска SQL-запросов (команда sql)
+$sqlDirs = [$rootDir . 'src/models', $rootDir . 'src/services'];
+
+// Директории для текстового поиска (usages, class, raw, ...)
+$searchDirs = [$rootDir . 'src', $rootDir . 'resources/js', $rootDir . 'templates'];
+
+// Расширения файлов для поиска
+$extensions = ['php', 'js', 'tpl', 'scss', 'css'];
+
+// Файл роутера (команда route)
+$routeFile = $rootDir . 'routes/web.php';
 ```
 
 Папка `cache/` должна существовать и быть доступна на запись.
 
-### 3. Настроить пути в `claudeSearch.php`
+### 3. Поправить `$rootDir` при необходимости
 
+По умолчанию `realpath(__DIR__ . '/../')` указывает на **родителя** папки `-claude-search/`. Измени `/../`, если папка размещена иначе.
+
+### 4. Добавить новый язык
+
+Создай `parsers/go.php` с функцией `parseGo()`, затем в `buildGraph.php` добавь:
 ```php
-$rootDir = __DIR__ . '/../../';           // корень проекта
-
-// Директории для текстового поиска (usages, class, raw и др.)
-$dirs = [
-    $rootDir . 'src',
-    $rootDir . 'app',
-    $rootDir . 'resources/js',
-];
-$extensions = ['php', 'js', 'scss', 'css'];
-
-// Для команды route — путь к файлу роутов
-$routeFile = $rootDir . 'routes/web.php';
-
-// Для команд schema и db — подключение к MySQL
-$pdo = new PDO('mysql:host=localhost;dbname=YOUR_DB;charset=utf8', 'read_only_user', '');
+require_once __DIR__ . '/parsers/go.php';
+$parsers['go'] = 'parseGo';
 ```
-
-### 4. Настроить `cs.sh`
-
-```bash
-#!/bin/bash
-php "$(dirname "$0")/claudeSearch.php" "$@"
+И в `config.php` добавь директории:
+```php
+$scanDirs['go'] = [$rootDir . 'cmd', $rootDir . 'internal'];
 ```
 
 ### 5. PHP в PATH
@@ -216,13 +220,13 @@ refs     (id, file_id, from_full_name, to_name, ref_type, line)
 
 ## Пример настройки CLAUDE.md
 
-После адаптации скриптов под проект добавь в `CLAUDE.md` раздел `## Работа с файлами`:
+После редактирования `config.php` добавь в `CLAUDE.md` раздел `## Работа с файлами`:
 
 ```markdown
 ## Работа с файлами
 
-**Инструмент поиска:** `tools/claudeSearch.php`
-bash /path/to/project/cs.sh <action> <term>
+**Инструмент поиска:** `-claude-search/claudeSearch.php`
+bash /path/to/project/-claude-search/cs.sh <action> <term>
 
 **Приоритет действий:**
 
@@ -265,27 +269,18 @@ bash /path/to/project/cs.sh <action> <term>
 ### Производительность графа
 
 - Инкрементальное обновление: **100–200 мс** (только изменённые файлы)
-- Полная пересборка проекта из ~500 файлов: **3–8 сек**
+- Полная пересборка ~500 файлов: **3–8 сек**
 - Запрос к SQLite (`graph usages`, `graph methods`): **< 10 мс**
 
 ---
 
 ## Планы развития
 
-В ближайшее время планируется поддержка дополнительных языков:
-
 Каждый язык — отдельный файл в `parsers/`. Добавление нового языка не затрагивает существующий код.
 
-**Go** (`parsers/go.php`)
-- `struct`, `interface`, `func`, методы с receiver (`func (r Receiver) Method()`)
-- `import` пакетов
-- Поддержка `_test.go` файлов
+**Go** (`parsers/go.php`) — `struct`, `interface`, `func`, receivers, `import`, `_test.go`
 
-**C / C++** (`parsers/c.php`)
-- `struct`, `enum`, объявления функций
-- Заголовочные файлы `.h` / `.hpp`
-- `#include` как import-ссылки
-- Определения и декларации индексируются раздельно
+**C / C++** (`parsers/c.php`) — `struct`, `enum`, объявления функций, `.h`/`.hpp`, `#include`
 
 ---
 

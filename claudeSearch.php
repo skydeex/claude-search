@@ -48,7 +48,7 @@ if (!$action || !$term) {
     exit(1);
 }
 
-$rootDir = __DIR__ . '/../../';
+require_once __DIR__ . '/config.php';
 
 
 // Убрать содержимое строковых литералов и однострочных комментариев
@@ -300,7 +300,6 @@ if ($action === 'context') {
 
 // --- route: найти URL-роут по имени метода контроллера ---
 if ($action === 'route') {
-    $routeFile = $rootDir . 'classes/router/GetRoute.php';
     if (!file_exists($routeFile)) { echo "GetRoute.php not found\n"; exit(1); }
 
     $lines = file($routeFile);
@@ -314,11 +313,7 @@ if ($action === 'route') {
 
 // --- sql: найти все запросы к таблице (включая многострочные) ---
 if ($action === 'sql') {
-    $dirs = [
-        $rootDir . 'classes/model',
-        $rootDir . 'classes/service',
-        $rootDir . 'cron',
-    ];
+    $dirs = $sqlDirs;
     foreach ($dirs as $dir) {
         if (!is_dir($dir)) continue;
         $iter = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($dir));
@@ -360,7 +355,7 @@ if ($action === 'sql') {
 // --- schema: структура таблицы из БД ---
 if ($action === 'schema') {
     try {
-        $pdo = new PDO('mysql:host=localhost;dbname=skydee0l_oz;charset=utf8', 'claude_ro', '');
+        $pdo = new PDO('mysql:host=' . CS_DB_HOST . ';dbname=' . CS_DB_NAME . ';charset=utf8', CS_DB_USER, CS_DB_PASS);
         $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
         $rows = $pdo->query("DESCRIBE `{$term}`")->fetchAll(PDO::FETCH_ASSOC);
         printTable($rows);
@@ -383,7 +378,7 @@ if ($action === 'db') {
     try {
         // claude_ro — read-only юзер
         // Создать: CREATE USER 'claude_ro'@'localhost'; GRANT SELECT ON skydee0l_oz.* TO 'claude_ro'@'localhost';
-        $pdo = new PDO('mysql:host=localhost;dbname=skydee0l_oz;charset=utf8', 'claude_ro', '');
+        $pdo = new PDO('mysql:host=' . CS_DB_HOST . ';dbname=' . CS_DB_NAME . ';charset=utf8', CS_DB_USER, CS_DB_PASS);
         $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
         $rows = $pdo->query($query)->fetchAll(PDO::FETCH_ASSOC);
         printTable($rows);
@@ -549,13 +544,7 @@ if ($action === 'graph') {
 
 
 // --- остальные actions: поиск по всему проекту ---
-$dirs = [
-    $rootDir . 'classes',
-    $rootDir . 'cron',
-    $rootDir . 'react/source',
-    $rootDir . 'templates',
-];
-$extensions = ['php', 'js', 'tpl', 'scss', 'css'];
+$dirs = $searchDirs;
 
 if ($action === 'usages')          $patterns = ["/{$term}\s*\(/", "/::{$term}\b/", "/\b{$term}\b/"];
 elseif ($action === 'class')       $patterns = ["/class\s+{$term}\b/", "/new\s+{$term}\b/", "/use\s+[\\\\a-zA-Z\\\\]*{$term}\b/"];

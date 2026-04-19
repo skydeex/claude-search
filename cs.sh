@@ -1,2 +1,2 @@
 #!/bin/bash
-php "$(dirname "$0")/classes/utils/claudeSearch.php" "$@"
+php "$(dirname "$0")/claudeSearch.php" "$@"

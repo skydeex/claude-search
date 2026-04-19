@@ -7,14 +7,13 @@
 // SQLite: cache/code_graph.sqlite
 // Парсеры: parsers/php.php, parsers/js.php
 
-$rootDir = __DIR__ . '/../../';
-$dbPath  = $rootDir . 'cache/code_graph.sqlite';
+require_once __DIR__ . '/config.php';
 $isFull  = in_array('--full', $argv);
 
 // ---- Парсеры ----
 // Чтобы добавить новый язык:
 //   1. Создать parsers/go.php с функцией parseGo()
-//   2. Добавить строку в $parsers и директории в $scanDirs
+//   2. Добавить строку в $parsers и директории в $scanDirs в config.php
 
 require_once __DIR__ . '/parsers/php.php';
 require_once __DIR__ . '/parsers/js.php';
@@ -22,16 +21,6 @@ require_once __DIR__ . '/parsers/js.php';
 $parsers = [
     'php' => 'parsePhp',
     'js'  => 'parseJs',
-];
-
-$scanDirs = [
-    'php' => [
-        $rootDir . 'classes',
-        $rootDir . 'cron',
-    ],
-    'js' => [
-        $rootDir . 'react/source',
-    ],
 ];
 
 
