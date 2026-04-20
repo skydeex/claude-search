@@ -74,7 +74,7 @@ $extensions = ['php', 'js', 'tpl', 'scss', 'css'];
 $routeFile = $rootDir . 'routes/web.php';
 ```
 
-The `cache/` directory must exist and be writable.
+The `claude-search/` directory must be writable.
 
 ### 3. Adjust `$rootDir` if needed
 
@@ -154,8 +154,8 @@ bash cs.sh graph files   SymbolName                    # all files where symbol 
 ### Running buildGraph.php directly
 
 ```bash
-php buildGraph.php          # incremental (changed files only)
-php buildGraph.php --full   # full rebuild
+php claude-search/buildGraph.php          # incremental (changed files only)
+php claude-search/buildGraph.php --full   # full rebuild
 ```
 
 ---
