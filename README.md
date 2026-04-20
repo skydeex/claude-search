@@ -28,7 +28,7 @@ claude-search/
     js.php              — JS/JSX parser (import, components, functions)
 ```
 
-The SQLite graph is stored in the project's `cache/code_graph.sqlite` (configured in `config.php`).
+The SQLite graph is stored in the project's `code_graph.sqlite` (configured in `config.php`).
 
 ---
 
@@ -53,7 +53,7 @@ define('CS_DB_USER', 'claude_ro');
 define('CS_DB_PASS', '');
 
 // SQLite graph path
-$dbPath = $rootDir . 'cache/code_graph.sqlite';
+$dbPath = $rootDir . 'claude-search/code_graph.sqlite';
 
 // Directories for graph indexing (buildGraph.php)
 $scanDirs = [
@@ -111,7 +111,7 @@ GRANT SELECT ON your_database.* TO 'claude_ro'@'localhost';
 ### 7. Add to `.gitignore`
 
 ```
-cache/code_graph.sqlite
+claude-search/code_graph.sqlite
 ```
 
 ---

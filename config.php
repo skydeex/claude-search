@@ -12,7 +12,7 @@ define('CS_DB_USER',   'claude_ro');
 define('CS_DB_PASS',   '1');
 
 // SQLite-граф
-$dbPath = $rootDir . 'cache/code_graph.sqlite';
+$dbPath = __DIR__ . DIRECTORY_SEPARATOR . 'code_graph.sqlite';
 
 // Директории для сканирования графа (buildGraph.php)
 // Формат: 'язык' => [список папок]

@@ -28,7 +28,7 @@
     js.php              — парсер JS/JSX (import, компоненты, функции)
 ```
 
-SQLite-граф хранится в `cache/code_graph.sqlite` проекта (путь задаётся в `config.php`).
+SQLite-граф хранится в `claude-search/code_graph.sqlite` проекта (путь задаётся в `config.php`).
 
 ---
 
@@ -53,7 +53,7 @@ define('CS_DB_USER', 'claude_ro');
 define('CS_DB_PASS', '');
 
 // Путь к SQLite-графу
-$dbPath = $rootDir . 'cache/code_graph.sqlite';
+$dbPath = $rootDir . 'claude-search/code_graph.sqlite';
 
 // Директории для индексации графа (buildGraph.php)
 $scanDirs = [
@@ -111,7 +111,7 @@ GRANT SELECT ON your_database.* TO 'claude_ro'@'localhost';
 ### 7. Добавить в `.gitignore`
 
 ```
-cache/code_graph.sqlite
+claude-search/code_graph.sqlite
 ```
 
 ---

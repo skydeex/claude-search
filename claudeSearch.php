@@ -397,10 +397,9 @@ if ($action === 'db') {
 // php claudeSearch.php graph chain ClassName             — цепочка extends/implements
 // php claudeSearch.php graph files ClassName             — в каких файлах упоминается
 if ($action === 'graph') {
-    $dbPath = $rootDir . 'cache/code_graph.sqlite';
     if (!file_exists($dbPath)) {
         echo "Graph not found: $dbPath\n";
-        echo "Run: php classes/utils/buildGraph.php\n";
+        echo "Run: php claude-search/buildGraph.php\n";
         exit(1);
     }
 

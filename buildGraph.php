@@ -4,7 +4,7 @@
 // Запуск: php buildGraph.php [--full]
 // --full  — полная перестройка (игнорирует mtime)
 //
-// SQLite: cache/code_graph.sqlite
+// SQLite: code_graph.sqlite
 // Парсеры: parsers/php.php, parsers/js.php
 
 require_once __DIR__ . '/config.php';
