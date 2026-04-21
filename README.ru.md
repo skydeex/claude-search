@@ -18,11 +18,13 @@
 ## Структура файлов
 
 ```
--claude-search/
+claude-search/
   config.php            — все настройки (только этот файл нужно менять)
   buildGraph.php        — оркестратор: БД, helpers, сканирование файлов
   claudeSearch.php      — CLI-интерфейс всех команд
-  cs.sh                 — bash-обёртка
+  claudeSearch.md       — инструкция для AI-ассистента (workflow, правила, команды)
+  cs.sh                 — bash-обёртка для удобного вызова
+  code_graph.sqlite     — SQLite-граф (генерируется автоматически, добавить в .gitignore)
   parsers/
     php.php             — парсер PHP (классы, методы, вызовы, use)
     js.php              — парсер JS/JSX (import, компоненты, функции)

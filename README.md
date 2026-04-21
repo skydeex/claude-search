@@ -22,7 +22,9 @@ claude-search/
   config.php            — all configuration (edit this to set up a new project)
   buildGraph.php        — orchestrator: DB, helpers, file scanning
   claudeSearch.php      — CLI interface for all commands
-  cs.sh                 — bash wrapper
+  claudeSearch.md       — AI assistant guide (workflow, rules, commands)
+  cs.sh                 — bash wrapper for convenient invocation
+  code_graph.sqlite     — SQLite graph (auto-generated, add to .gitignore)
   parsers/
     php.php             — PHP parser (classes, methods, calls, use)
     js.php              — JS/JSX parser (import, components, functions)

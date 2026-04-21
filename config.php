@@ -42,7 +42,7 @@ $searchDirs = [
 ];
 
 // Расширения файлов для поиска
-$extensions = ['php', 'js', 'tpl', 'scss', 'css'];
+$extensions = ['php', 'js', 'jsx', 'tpl', 'scss', 'css'];
 
 // Файл роутера (action: route)
 $routeFile = $rootDir . 'classes/router/GetRoute.php';
