@@ -121,7 +121,7 @@ if ($action === 'method' || $action === 'block') {
             "/^\s*(?!(?:{$jsKeywords})\b)({$methodName})\s*[=:]\s*(async\s+)?(function|\()/",      // foo = function / foo = (
             "/^\s*(?:async\s+)?(?!(?:{$jsKeywords})\b)({$methodName})\s*\([^)]*\)\s*\{/",          // class method: foo() {
             "/^\s*({$methodName})\s*=\s*(?:async\s+)?\(/",                                         // class arrow: foo = () =>
-        ];
+        ]);
 
     // ищем все совпадения, берём первое где имя совпадает точно
     $startLine = null;
