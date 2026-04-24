@@ -24,6 +24,9 @@ $scanDirs = [
     'js' => [
         $rootDir . 'react/source',
     ],
+    'go' => [
+        $rootDir,               // корень проекта + internal/ рекурсивно (только *.go)
+    ],
 ];
 
 // Директории для поиска SQL-запросов (action: sql)
@@ -31,6 +34,7 @@ $sqlDirs = [
     $rootDir . 'classes/model',
     $rootDir . 'classes/service',
     $rootDir . 'cron',
+    $rootDir . 'internal',
 ];
 
 // Директории для поискового индекса (actions: usages, class, raw, ...)
@@ -39,10 +43,12 @@ $searchDirs = [
     $rootDir . 'cron',
     $rootDir . 'react/source',
     $rootDir . 'templates',
+    $rootDir . 'internal',
+    $rootDir,
 ];
 
 // Расширения файлов для поиска
-$extensions = ['php', 'js', 'jsx', 'tpl', 'scss', 'css'];
+$extensions = ['php', 'js', 'jsx', 'tpl', 'scss', 'css', 'go'];
 
 // Файл роутера (action: route)
 $routeFile = $rootDir . 'classes/router/GetRoute.php';

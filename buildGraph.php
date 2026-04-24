@@ -17,10 +17,12 @@ $isFull  = in_array('--full', $argv);
 
 require_once __DIR__ . '/parsers/php.php';
 require_once __DIR__ . '/parsers/js.php';
+require_once __DIR__ . '/parsers/go.php';
 
 $parsers = [
     'php' => 'parsePhp',
     'js'  => 'parseJs',
+    'go'  => 'parseGo',
 ];
 
 

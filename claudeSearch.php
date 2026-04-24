@@ -111,6 +111,11 @@ if ($action === 'method' || $action === 'block') {
         ? [
             "/function\s+{$methodName}\s*\(/",
         ]
+        : ($ext === 'go'
+        ? [
+            "/^func\s+\(\w+\s+\*?\w+\)\s+{$methodName}\s*\(/",   // method: func (r *T) Foo(
+            "/^func\s+{$methodName}\s*[\(\[]/",                    // function: func Foo(
+        ]
         : [
             "/function\s+{$methodName}\s*\(/",                                                      // function foo(
             "/^\s*(?!(?:{$jsKeywords})\b)({$methodName})\s*[=:]\s*(async\s+)?(function|\()/",      // foo = function / foo = (
@@ -179,6 +184,13 @@ if ($action === 'outline') {
     $jsKeywords = 'if|for|while|switch|catch|else|return|typeof|instanceof|new|delete|void|throw';
     $patterns = $ext === 'php'
         ? ["/(?:public|protected|private|static|\s)+function\s+(\w+)\s*\(/"]
+        : ($ext === 'go'
+        ? [
+            // метод с receiver: func (r *Type) MethodName(
+            "/^func\s+\(\w+\s+\*?(\w+)\)\s+(\w+)\s*\(/",
+            // top-level функция: func FuncName(
+            "/^func\s+(\w+)\s*[\(\[]/",
+        ]
         : [
             // class method: foo() { или async foo() {
             "/^\s*(?:async\s+)?(?!(?:{$jsKeywords})\s*[\(\s])([a-zA-Z_\$][a-zA-Z0-9_\$]*)\s*\([^)]*\)\s*[\{=]/",
@@ -188,14 +200,15 @@ if ($action === 'outline') {
             "/^\s*([a-zA-Z_\$][a-zA-Z0-9_\$]*)\s*=\s*(?:async\s+)?\(/",
             // function foo(
             "/^\s*(?:async\s+)?function\s+([a-zA-Z_\$][a-zA-Z0-9_\$]*)\s*\(/",
-        ];
+        ]);
 
     $seen = []; // не дублировать одну строку
     foreach ($lines as $i => $line) {
         $clean = stripStringsAndComments($line);
         foreach ($patterns as $p) {
             if (preg_match($p, $clean, $m)) {
-                $name = end($m);
+                // Go-метод с receiver: два capture-группы → Type::Method
+                $name = ($ext === 'go' && count($m) === 3) ? $m[1] . '.' . $m[2] : end($m);
                 if (in_array($i, $seen)) break;
                 $seen[] = $i;
                 printf("%-40s line %d\n", $name . '()', $i + 1);
@@ -318,7 +331,7 @@ if ($action === 'sql') {
         if (!is_dir($dir)) continue;
         $iter = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($dir));
         foreach ($iter as $file) {
-            if ($file->getExtension() !== 'php') continue;
+            if (!in_array($file->getExtension(), ['php', 'go'])) continue;
             $content = file_get_contents($file->getPathname());
             $relPath = str_replace(realpath($rootDir) . DIRECTORY_SEPARATOR, '', $file->getPathname());
             $relPath = str_replace('\\', '/', $relPath);

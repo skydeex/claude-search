@@ -8,7 +8,7 @@ Two PHP scripts that allow an AI assistant (Claude, Cursor, etc.) to work with a
 
 ## How it works
 
-- **`buildGraph.php`** — parses PHP and JS files, builds a dependency graph in SQLite. Incremental: re-running only updates changed files (~100–200 ms).
+- **`buildGraph.php`** — parses PHP, JS and Go files, builds a dependency graph in SQLite. Incremental: re-running only updates changed files (~100–200 ms).
 - **`claudeSearch.php`** — CLI interface. Automatically calls `buildGraph.php` before any `graph` query.
 - **`config.php`** — single configuration file: project root, MySQL credentials, scan directories.
 - **`cs.sh`** — bash wrapper for convenient invocation.
@@ -28,6 +28,7 @@ claude-search/
   parsers/
     php.php             — PHP parser (classes, methods, calls, use)
     js.php              — JS/JSX parser (import, components, functions)
+    go.php              — Go parser (structs, interfaces, funcs, receivers, imports)
 ```
 
 The SQLite graph is stored in the project's `code_graph.sqlite` (configured in `config.php`).
@@ -84,15 +85,18 @@ The default `realpath(__DIR__ . '/../')` points to the **parent** of the `-claud
 
 ### 4. Add a new language
 
-Create `parsers/go.php` with a `parseGo()` function, then in `buildGraph.php` add:
-```php
-require_once __DIR__ . '/parsers/go.php';
-$parsers['go'] = 'parseGo';
-```
-And in `config.php` add scan directories:
+Go support is already built in (`parsers/go.php`). To enable it in `config.php`:
 ```php
 $scanDirs['go'] = [$rootDir . 'cmd', $rootDir . 'internal'];
+$extensions[]   = 'go';
 ```
+
+To add another language (e.g. Python), create `parsers/python.php` with a `parsePython()` function, then in `buildGraph.php`:
+```php
+require_once __DIR__ . '/parsers/python.php';
+$parsers['py'] = 'parsePython';
+```
+And in `config.php` add scan directories and extension.
 
 ### 5. PHP in PATH
 
@@ -131,8 +135,10 @@ bash cs.sh raw       "any text"               # raw text search
 
 # Work with a specific file
 bash cs.sh outline   path/to/File.php         # all methods with line numbers
+bash cs.sh outline   path/to/File.go          # all funcs/methods with line numbers (Go)
 bash cs.sh outline   path/to/File.scss        # all top-level selectors
 bash cs.sh method    path/to/File.php foo     # code of method foo (PHP)
+bash cs.sh method    path/to/File.go  Foo     # code of func/method Foo (Go)
 bash cs.sh block     path/to/File.js  bar     # code of function/component bar (JS)
 bash cs.sh scss      path/to/File.scss .foo   # CSS selector block (including nested)
 bash cs.sh entity    path/to/Entity.php       # class fields and constructor
@@ -168,6 +174,8 @@ php claude-search/buildGraph.php --full   # full rebuild
 
 **JS/JSX:** `import`, classes, functions (all declaration styles), `<Component`, function calls
 
+**Go:** `type X struct`, `type X interface`, `func (r *T) Method(` → `T::Method`, top-level `func`, method/function calls, `&Type{}` instantiation, `import`
+
 ---
 
 ## SQLite schema
@@ -201,11 +209,16 @@ Instead of reading large files in full:
 1. `graph usages MethodName` → instant from SQLite (matches exact name and `ClassName::method`)
 
 **Need to read a method/function/selector:**
-1. `outline path/to/File` → list of methods with line numbers
-2. `method path/to/File methodName` → method body (PHP)
+1. `outline path/to/File` → list of methods with line numbers (PHP, Go, JS)
+2. `method path/to/File methodName` → method/function body (PHP or Go)
 3. `block path/to/File fnName` → function/component body (JS)
 4. `scss path/to/File.scss .selector` → CSS selector block
 5. `context path/to/File line 3` → ±3 lines (to verify `old_string` before Edit)
+
+**Go-specific:**
+1. `graph methods StructName` → all methods of a struct
+2. `outline path/to/file.go` → all funcs/methods, shown as `Type.Method()`
+3. `method path/to/file.go FuncName` → Go function or method body
 
 **Other common cases:**
 - `graph chain ClassName` — extends/implements chain
@@ -280,9 +293,9 @@ The core problem when an AI assistant works with a large project is context wind
 
 Each language is a separate file in `parsers/` — adding one does not affect existing code.
 
-**Go** (`parsers/go.php`) — `struct`, `interface`, `func`, receivers, `import`, `_test.go`
-
 **C / C++** (`parsers/c.php`) — `struct`, `enum`, function declarations, `.h`/`.hpp`, `#include`
+
+**Python** (`parsers/python.php`) — `class`, `def`, decorators, `import`
 
 ---
 
