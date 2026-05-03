@@ -2,14 +2,21 @@
 
 🇬🇧 [Read in English](README.md)
 
-Два PHP-скрипта, которые позволяют AI-ассистенту (Claude, Cursor и др.) работать с большой кодовой базой **без чтения файлов целиком**: находить методы, классы, SQL-запросы, зависимости и структуру через CLI.
+Набор PHP-скриптов, которые дают AI-ассистенту (Claude, Cursor и др.) точный, малотокенный доступ к большой кодовой базе — **без чтения файлов целиком**.
+
+Три взаимодополняющих режима поиска:
+- **Структурный** — граф зависимостей в SQLite: кто что вызывает, цепочки наследования, все методы класса, файлы где упоминается символ. Ответ за < 10 мс.
+- **Текстовый** — grep-поиск по файлам проекта на лету: использования метода, SQL-запросы к таблице, произвольный текст, роуты.
+- **Семантический** — поиск по смыслу через векторные эмбеддинги (Voyage AI / OpenAI / Ollama): найти код по описанию, когда точное название неизвестно.
+
+Вместо чтения файла на 500 строк ассистент делает один точечный запрос и получает 5–20 строк нужного вывода. Контекстное окно остаётся свободным для логики задачи.
 
 > **Если ты AI-ассистент** — прочитай **[claudeSearch.md](claudeSearch.md)**. Там описан workflow, правила работы с файлами и все команды.
 
 ## Как это работает
 
-- **`buildGraph.php`** — парсит PHP, JS и Go файлы, строит граф зависимостей в SQLite. Инкрементальный: повторный запуск обновляет только изменённые файлы (~100–200 мс).
-- **`claudeSearch.php`** — CLI-интерфейс. Перед `graph`-запросами автоматически вызывает `buildGraph.php`.
+- **`buildGraph.php`** — парсит PHP, JS и Go файлы, строит граф зависимостей в SQLite. Инкрементальный: повторный запуск обновляет только изменённые файлы (~100–200 мс). Если настроены эмбеддинги — автоматически индексирует новые символы.
+- **`claudeSearch.php`** — CLI-интерфейс. Перед `graph`/`similar`-запросами автоматически вызывает `buildGraph.php`.
 - **`config.php`** — единый файл настроек: корень проекта, доступ к MySQL, директории сканирования.
 - **`cs.sh`** — bash-обёртка для удобного вызова.
 
@@ -20,8 +27,9 @@
 ```
 claude-search/
   config.php            — все настройки (только этот файл нужно менять)
-  buildGraph.php        — оркестратор: БД, helpers, сканирование файлов
+  buildGraph.php        — оркестратор: БД, helpers, сканирование, индексация эмбеддингов
   claudeSearch.php      — CLI-интерфейс всех команд
+  embed.php             — провайдеры эмбеддингов (voyage, openai, ollama)
   claudeSearch.md       — инструкция для AI-ассистента (workflow, правила, команды)
   cs.sh                 — bash-обёртка для удобного вызова
   code_graph.sqlite     — SQLite-граф (генерируется автоматически, добавить в .gitignore)
@@ -157,6 +165,10 @@ bash cs.sh graph callers ClassName::method             # кто вызывает
 bash cs.sh graph deps    ClassName                     # что использует класс (исходящие refs)
 bash cs.sh graph chain   ClassName                     # цепочка extends/implements
 bash cs.sh graph files   SymbolName                    # во всех файлах как символ или ref
+
+# Семантический поиск (требует настройки CS_EMBED_PROVIDER в config.php)
+bash cs.sh similar "расчёт налога 7%"                 # поиск по смыслу (текст)
+bash cs.sh similar ClassName::methodName              # найти похожие на метод
 ```
 
 ### Запуск buildGraph.php напрямую
@@ -182,16 +194,20 @@ php claude-search/buildGraph.php --full   # полная пересборка г
 
 ```sql
 -- Файлы проекта
-files    (id, path, mtime, lang)
+files       (id, path, mtime, lang)
 
 -- Символы: классы, методы, функции, компоненты
-symbols  (id, file_id, type, name, full_name, line, visibility, is_static)
+symbols     (id, file_id, type, name, full_name, line, visibility, is_static)
 -- type: class | method | function | property | component
 -- full_name: ClassName::methodName
 
 -- Ссылки: вызовы, импорты, наследование
-refs     (id, file_id, from_full_name, to_name, ref_type, line)
+refs        (id, file_id, from_full_name, to_name, ref_type, line)
 -- ref_type: call | static_call | instantiate | extends | implements | import | jsx
+
+-- Эмбеддинги для семантического поиска (заполняется если настроен CS_EMBED_PROVIDER)
+embeddings  (symbol_id, vector)
+-- vector: JSON float[] — только INSERT для новых символов, никогда UPDATE
 ```
 
 ---
@@ -297,6 +313,25 @@ bash /path/to/project/-claude-search/cs.sh <action> <term>
 
 **Python** (`parsers/python.php`) — `class`, `def`, декораторы, `import`
 
+### Настройка эмбеддингов (`similar`)
+
+Раскомментировать в `config.php`:
+```php
+// Voyage AI (лучше для кода):
+define('CS_EMBED_PROVIDER', 'voyage');
+define('CS_EMBED_KEY',      'pa-...');
+
+// OpenAI:
+define('CS_EMBED_PROVIDER', 'openai');
+define('CS_EMBED_KEY',      'sk-...');
+
+// Ollama (локально, без ключа):
+define('CS_EMBED_PROVIDER', 'ollama');
+// define('CS_OLLAMA_MODEL', 'nomic-embed-text');
+```
+
+После настройки запустить `php buildGraph.php` — новые символы проиндексируются автоматически.
+
 ---
 
 ## Примечания
@@ -305,6 +340,7 @@ bash /path/to/project/-claude-search/cs.sh <action> <term>
 
 - `db` action — только SELECT-запросы. Другие запросы блокируются на уровне кода.
 - `method`/`block` — находит блок по балансу `{}`, корректно игнорирует строки со `style={{}}` и JSX-атрибутами.
-- `graph` автоматически вызывает `buildGraph.php` инкрементально перед каждым запросом.
+- `graph` и `similar` автоматически вызывают `buildGraph.php` инкрементально перед каждым запросом.
 - На Windows `2>/dev/null` не работает — скрипт автоматически подставляет `NUL`.
 - Требует PHP с расширениями `pdo_sqlite` и `pdo_mysql`.
+- `similar` дополнительно требует расширение `curl` и настроенный `CS_EMBED_PROVIDER` в `config.php`.

@@ -24,6 +24,8 @@
 // php claudeSearch.php context react/source/CreateSupply/CreateSupply.js 167 10
 // php claudeSearch.php schema supplies
 // php claudeSearch.php db "SELECT id, cluster_name, status_id FROM supplies LIMIT 10"
+// php claudeSearch.php similar "расчёт налога 7%"
+// php claudeSearch.php similar OzonSaleService::getProfitCommission
 // php claudeSearch.php graph usages createApiSupply_per30sec
 // php claudeSearch.php graph methods OzonSupplyService
 // php claudeSearch.php graph callers OzonSupplyService::createApiSupply_per30sec
@@ -36,15 +38,15 @@ $term   = $argv[2] ?? null;
 $term2  = $argv[3] ?? null;
 $term3  = $argv[4] ?? null;
 
-// Авто-обновление графа перед graph-запросами (инкрементальное, ~100-200ms)
-if ($action === 'graph') {
+// Авто-обновление графа перед graph/similar запросами (инкрементальное, ~100-200ms)
+if ($action === 'graph' || $action === 'similar') {
     $null = PHP_OS_FAMILY === 'Windows' ? 'NUL' : '/dev/null';
     exec(PHP_BINARY . ' ' . __DIR__ . '/buildGraph.php 2>' . $null);
 }
 
 if (!$action || !$term) {
     echo "Usage: php claudeSearch.php <action> <term>\n";
-    echo "Actions: usages, class, extends, implements, import, raw, method, block, outline, entity, route, sql, context, schema, db, graph\n";
+    echo "Actions: usages, class, extends, implements, import, raw, method, block, outline, entity, route, sql, context, schema, db, graph, similar\n";
     exit(1);
 }
 
@@ -409,6 +411,70 @@ if ($action === 'db') {
 // php claudeSearch.php graph deps ClassName              — что использует класс (исходящие refs)
 // php claudeSearch.php graph chain ClassName             — цепочка extends/implements
 // php claudeSearch.php graph files ClassName             — в каких файлах упоминается
+if ($action === 'similar') {
+    require_once __DIR__ . '/embed.php';
+
+    if (!isEmbedEnabled()) {
+        echo "Embeddings not configured.\n";
+        echo "Set CS_EMBED_PROVIDER and CS_EMBED_KEY in config.php\n";
+        exit(1);
+    }
+    if (!file_exists($dbPath)) {
+        echo "Graph not found. Run: php buildGraph.php\n";
+        exit(1);
+    }
+
+    $db = new PDO('sqlite:' . $dbPath);
+    $db->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+
+    // Если $term совпадает с full_name в таблице — берём готовый вектор без API-вызова
+    $stored = $db->query("
+        SELECT e.vector FROM embeddings e
+        JOIN symbols s ON s.id = e.symbol_id
+        WHERE s.full_name = " . $db->quote($term) . "
+        LIMIT 1
+    ")->fetch(PDO::FETCH_ASSOC);
+
+    if ($stored) {
+        $queryVector = json_decode($stored['vector'], true);
+    } else {
+        $queryVector = getEmbedding($term);
+        if (!$queryVector) {
+            echo "Failed to get embedding for: $term\n";
+            exit(1);
+        }
+    }
+
+    // Загружаем все векторы и считаем cosine similarity в PHP
+    $rows = $db->query("
+        SELECT e.vector, s.type, s.full_name, f.path, s.line
+        FROM embeddings e
+        JOIN symbols s ON s.id = e.symbol_id
+        JOIN files f ON f.id = s.file_id
+    ")->fetchAll(PDO::FETCH_ASSOC);
+
+    $results = [];
+    foreach ($rows as $row) {
+        $vector = json_decode($row['vector'], true);
+        if (!$vector) continue;
+        $results[] = [
+            'sim'       => cosineSimilarity($queryVector, $vector),
+            'type'      => $row['type'],
+            'full_name' => $row['full_name'],
+            'path'      => $row['path'],
+            'line'      => $row['line'],
+        ];
+    }
+
+    usort($results, fn($a, $b) => $b['sim'] <=> $a['sim']);
+
+    echo "Similar to: \"$term\"\n\n";
+    foreach (array_slice($results, 0, 15) as $r)
+        printf("%.4f  %-12s %-50s %s:%d\n", $r['sim'], $r['type'], $r['full_name'], $r['path'], $r['line']);
+
+    exit(0);
+}
+
 if ($action === 'graph') {
     if (!file_exists($dbPath)) {
         echo "Graph not found: $dbPath\n";

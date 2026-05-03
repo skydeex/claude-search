@@ -2,14 +2,21 @@
 
 🇷🇺 [Читать на русском](README.ru.md)
 
-Two PHP scripts that allow an AI assistant (Claude, Cursor, etc.) to work with a large codebase **without reading entire files**: find methods, classes, SQL queries, dependencies and structure via CLI.
+A set of PHP scripts that give an AI assistant (Claude, Cursor, etc.) precise, low-token access to a large codebase — **without reading entire files**.
+
+Three complementary search modes:
+- **Structural** — dependency graph in SQLite: who calls what, inheritance chains, all methods of a class, files where a symbol appears. Answers in < 10 ms.
+- **Textual** — grep-style search across project files on the fly: method usages, SQL queries to a table, raw text, routes.
+- **Semantic** — vector similarity search via embeddings (Voyage AI / OpenAI / Ollama): find code by meaning when you don't know the exact name.
+
+Instead of reading a 500-line file, the assistant asks one targeted query and gets back 5–20 lines of relevant output. Context window stays free for actual task logic.
 
 > **If you are an AI assistant** — read **[claudeSearch.md](claudeSearch.md)**. It contains the workflow, file-reading rules and all commands.
 
 ## How it works
 
-- **`buildGraph.php`** — parses PHP, JS and Go files, builds a dependency graph in SQLite. Incremental: re-running only updates changed files (~100–200 ms).
-- **`claudeSearch.php`** — CLI interface. Automatically calls `buildGraph.php` before any `graph` query.
+- **`buildGraph.php`** — parses PHP, JS and Go files, builds a dependency graph in SQLite. Incremental: re-running only updates changed files (~100–200 ms). If embeddings are configured, automatically indexes new symbols.
+- **`claudeSearch.php`** — CLI interface. Automatically calls `buildGraph.php` before any `graph` or `similar` query.
 - **`config.php`** — single configuration file: project root, MySQL credentials, scan directories.
 - **`cs.sh`** — bash wrapper for convenient invocation.
 
@@ -20,8 +27,9 @@ Two PHP scripts that allow an AI assistant (Claude, Cursor, etc.) to work with a
 ```
 claude-search/
   config.php            — all configuration (edit this to set up a new project)
-  buildGraph.php        — orchestrator: DB, helpers, file scanning
+  buildGraph.php        — orchestrator: DB, helpers, file scanning, embeddings indexing
   claudeSearch.php      — CLI interface for all commands
+  embed.php             — embedding providers (voyage, openai, ollama)
   claudeSearch.md       — AI assistant guide (workflow, rules, commands)
   cs.sh                 — bash wrapper for convenient invocation
   code_graph.sqlite     — SQLite graph (auto-generated, add to .gitignore)
@@ -157,6 +165,10 @@ bash cs.sh graph callers ClassName::method             # who calls a method
 bash cs.sh graph deps    ClassName                     # what the class uses (outgoing refs)
 bash cs.sh graph chain   ClassName                     # extends/implements chain
 bash cs.sh graph files   SymbolName                    # all files where symbol appears
+
+# Semantic search (requires CS_EMBED_PROVIDER in config.php)
+bash cs.sh similar "calculate tax 7%"                 # search by meaning (text query)
+bash cs.sh similar ClassName::methodName              # find symbols similar to a method
 ```
 
 ### Running buildGraph.php directly
@@ -182,16 +194,20 @@ php claude-search/buildGraph.php --full   # full rebuild
 
 ```sql
 -- Project files
-files    (id, path, mtime, lang)
+files       (id, path, mtime, lang)
 
 -- Symbols: classes, methods, functions, components
-symbols  (id, file_id, type, name, full_name, line, visibility, is_static)
+symbols     (id, file_id, type, name, full_name, line, visibility, is_static)
 -- type: class | method | function | property | component
 -- full_name: ClassName::methodName
 
 -- References: calls, imports, inheritance
-refs     (id, file_id, from_full_name, to_name, ref_type, line)
+refs        (id, file_id, from_full_name, to_name, ref_type, line)
 -- ref_type: call | static_call | instantiate | extends | implements | import | jsx
+
+-- Embeddings for semantic search (populated when CS_EMBED_PROVIDER is configured)
+embeddings  (symbol_id, vector)
+-- vector: JSON float[] — INSERT only for new symbols, never UPDATE
 ```
 
 ---
@@ -297,6 +313,25 @@ Each language is a separate file in `parsers/` — adding one does not affect ex
 
 **Python** (`parsers/python.php`) — `class`, `def`, decorators, `import`
 
+### Enabling semantic search (`similar`)
+
+Uncomment in `config.php`:
+```php
+// Voyage AI (best for code):
+define('CS_EMBED_PROVIDER', 'voyage');
+define('CS_EMBED_KEY',      'pa-...');
+
+// OpenAI:
+define('CS_EMBED_PROVIDER', 'openai');
+define('CS_EMBED_KEY',      'sk-...');
+
+// Ollama (local, no key required):
+define('CS_EMBED_PROVIDER', 'ollama');
+// define('CS_OLLAMA_MODEL', 'nomic-embed-text');
+```
+
+After configuring, run `php buildGraph.php` — new symbols will be indexed automatically.
+
 ---
 
 ## Notes
@@ -305,6 +340,7 @@ Each language is a separate file in `parsers/` — adding one does not affect ex
 
 - `db` action — SELECT only. Other queries are blocked at the code level.
 - `method`/`block` — finds the block by `{}` balance, correctly ignores `style={{}}` and JSX attributes.
-- `graph` automatically runs `buildGraph.php` incrementally before each query.
+- `graph` and `similar` automatically run `buildGraph.php` incrementally before each query.
 - On Windows `2>/dev/null` does not work — the script automatically substitutes `NUL`.
 - Requires PHP with `pdo_sqlite` and `pdo_mysql` extensions.
+- `similar` additionally requires the `curl` extension and `CS_EMBED_PROVIDER` configured in `config.php`.

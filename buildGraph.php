@@ -58,6 +58,10 @@ $db->exec('
         ref_type       TEXT,   -- call|static_call|instantiate|extends|implements|import|jsx
         line           INTEGER
     );
+    CREATE TABLE IF NOT EXISTS embeddings (
+        symbol_id INTEGER PRIMARY KEY,
+        vector    TEXT    -- JSON float[]
+    );
     CREATE INDEX IF NOT EXISTS idx_sym_name      ON symbols(name);
     CREATE INDEX IF NOT EXISTS idx_sym_full      ON symbols(full_name);
     CREATE INDEX IF NOT EXISTS idx_sym_file      ON symbols(file_id);
@@ -148,3 +152,40 @@ foreach ($scanDirs as $lang => $dirs) {
 
 echo "\nDone. Total: $total, updated: $updated, skipped: $skipped\n";
 echo "Graph: $dbPath\n";
+
+
+// ---- Embeddings ----
+// Только если настроен провайдер. Индексируем новые символы (INSERT only, no UPDATE).
+// Удалённые символы чистим. Изменённые — не переиндексируем (семантика меняется редко).
+
+require_once __DIR__ . '/embed.php';
+
+if (isEmbedEnabled()) {
+
+    // Чистим эмбеддинги удалённых символов
+    $db->exec("DELETE FROM embeddings WHERE symbol_id NOT IN (SELECT id FROM symbols)");
+
+    // Находим символы без эмбеддингов
+    $newSymbols = $db->query("
+        SELECT s.id, s.type, s.full_name, f.path
+        FROM symbols s
+        LEFT JOIN embeddings e ON e.symbol_id = s.id
+        JOIN files f ON f.id = s.file_id
+        WHERE e.symbol_id IS NULL
+    ")->fetchAll(PDO::FETCH_ASSOC);
+
+    if ($newSymbols) {
+        echo "\nEmbeddings: indexing " . count($newSymbols) . " new symbols...\n";
+        $indexed = 0;
+        $stmt = $db->prepare("INSERT INTO embeddings (symbol_id, vector) VALUES (?, ?)");
+        foreach ($newSymbols as $sym) {
+            $text   = $sym['type'] . ': ' . $sym['full_name'] . ' (' . $sym['path'] . ')';
+            $vector = getEmbedding($text);
+            if ($vector) {
+                $stmt->execute([$sym['id'], json_encode($vector)]);
+                $indexed++;
+            }
+        }
+        echo "Embeddings: indexed $indexed symbols\n";
+    }
+}

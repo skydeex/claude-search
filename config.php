@@ -52,3 +52,15 @@ $extensions = ['php', 'js', 'jsx', 'tpl', 'scss', 'css', 'go'];
 
 // Файл роутера (action: route)
 $routeFile = $rootDir . 'classes/router/GetRoute.php';
+
+// ---- Embeddings (опционально) ----
+// Если не настроено — action 'similar' и индексация эмбеддингов отключены.
+// Провайдеры: 'voyage' | 'openai' | 'ollama'
+//
+// define('CS_EMBED_PROVIDER', 'voyage');
+// define('CS_EMBED_KEY',      'your-key-here');
+//
+// Для ollama (локально, без ключа):
+// define('CS_EMBED_PROVIDER', 'ollama');
+// define('CS_OLLAMA_URL',     'http://localhost:11434');  // опционально
+// define('CS_OLLAMA_MODEL',   'nomic-embed-text');        // опционально
