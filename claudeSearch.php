@@ -478,7 +478,7 @@ if ($action === 'similar') {
 if ($action === 'graph') {
     if (!file_exists($dbPath)) {
         echo "Graph not found: $dbPath\n";
-        echo "Run: php claude-search/buildGraph.php\n";
+        echo "Run: php claudeSearch/buildGraph.php\n";
         exit(1);
     }
 

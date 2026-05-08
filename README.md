@@ -17,15 +17,13 @@ Instead of reading a 500-line file, the assistant asks one targeted query and ge
 
 - **`buildGraph.php`** — parses PHP, JS and Go files, builds a dependency graph in SQLite. Incremental: re-running only updates changed files (~100–200 ms). If embeddings are configured, automatically indexes new symbols.
 - **`claudeSearch.php`** — CLI interface. Automatically calls `buildGraph.php` before any `graph` or `similar` query.
-- **`config.php`** — single configuration file: project root, MySQL credentials, scan directories.
-- **`cs.sh`** — bash wrapper for convenient invocation.
 
 ---
 
 ## File structure
 
 ```
-claude-search/
+claudeSearch/
   config.php            — all configuration (edit this to set up a new project)
   buildGraph.php        — orchestrator: DB, helpers, file scanning, embeddings indexing
   claudeSearch.php      — CLI interface for all commands
@@ -47,7 +45,7 @@ The SQLite graph is stored in the project's `code_graph.sqlite` (configured in `
 
 ### 1. Place the folder
 
-Put the entire `-claude-search/` folder anywhere inside your project (or alongside it at the same level).
+Put the entire `claudeSearch/` folder anywhere inside your project (or alongside it at the same level).
 
 ### 2. Edit `config.php`
 
@@ -64,7 +62,7 @@ define('CS_DB_USER', 'claude_ro');
 define('CS_DB_PASS', '');
 
 // SQLite graph path
-$dbPath = $rootDir . 'claude-search/code_graph.sqlite';
+$dbPath = $rootDir . 'claudeSearch/code_graph.sqlite';
 
 // Directories for graph indexing (buildGraph.php)
 $scanDirs = [
@@ -85,11 +83,11 @@ $extensions = ['php', 'js', 'tpl', 'scss', 'css'];
 $routeFile = $rootDir . 'routes/web.php';
 ```
 
-The `claude-search/` directory must be writable.
+The `claudeSearch/` directory must be writable.
 
 ### 3. Adjust `$rootDir` if needed
 
-The default `realpath(__DIR__ . '/../')` points to the **parent** of the `-claude-search/` folder. Adjust `/../` if your folder is placed differently.
+The default `realpath(__DIR__ . '/../')` points to the **parent** of the `claudeSearch/` folder. Adjust `/../` if your folder is placed differently.
 
 ### 4. Add a new language
 
@@ -112,7 +110,7 @@ And in `config.php` add scan directories and extension.
 
 **Windows (Git Bash):** add to `~/.bash_profile`:
 ```bash
-export PATH="$PATH:/c/OSPanel/modules/php/PHP_8.x"
+export PATH="$PATH:/c/php/PHP_8.x"
 ```
 
 ### 6. Read-only MySQL user (for `schema` and `db`)
@@ -125,7 +123,7 @@ GRANT SELECT ON your_database.* TO 'claude_ro'@'localhost';
 ### 7. Add to `.gitignore`
 
 ```
-claude-search/code_graph.sqlite
+claudeSearch/code_graph.sqlite
 ```
 
 ---
@@ -174,8 +172,8 @@ bash cs.sh similar ClassName::methodName              # find symbols similar to 
 ### Running buildGraph.php directly
 
 ```bash
-php claude-search/buildGraph.php          # incremental (changed files only)
-php claude-search/buildGraph.php --full   # full rebuild
+php claudeSearch/buildGraph.php          # incremental (changed files only)
+php claudeSearch/buildGraph.php --full   # full rebuild
 ```
 
 ---
@@ -256,8 +254,8 @@ After editing `config.php`, add a `## Working with files` section to `CLAUDE.md`
 ```markdown
 ## Working with files
 
-**Search tool:** `-claude-search/claudeSearch.php`
-bash /path/to/project/-claude-search/cs.sh <action> <term>
+**Search tool:** `claudeSearch/claudeSearch.php`
+bash claudeSearch/cs.sh <action> <term>
 
 **Priority actions:**
 
