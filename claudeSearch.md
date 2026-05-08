@@ -46,6 +46,22 @@ $routeFile  = $rootDir . '...';     // файл роутера
 // define('CS_EMBED_KEY',      'your-key');
 ```
 
+Варианты провайдеров для `similar` — раскомментировать нужный блок в `config.php`:
+```php
+// Voyage AI (лучше для кода, ключ на https://www.voyageai.com):
+define('CS_EMBED_PROVIDER', 'voyage');
+define('CS_EMBED_KEY',      'pa-...');
+
+// OpenAI (ключ на https://platform.openai.com):
+define('CS_EMBED_PROVIDER', 'openai');
+define('CS_EMBED_KEY',      'sk-...');
+
+// Ollama (локально, без ключа, нужен запущенный ollama):
+define('CS_EMBED_PROVIDER', 'ollama');
+// define('CS_OLLAMA_MODEL', 'nomic-embed-text'); // модель по умолчанию
+```
+После изменения запустить `php claudeSearch/buildGraph.php` — новые символы проиндексируются автоматически.
+
 Read-only пользователь MySQL:
 ```sql
 CREATE USER 'claude_ro'@'localhost' IDENTIFIED BY '';

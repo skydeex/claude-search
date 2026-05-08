@@ -17,6 +17,7 @@ Instead of reading a 500-line file, the assistant asks one targeted query and ge
 
 - **`buildGraph.php`** — parses PHP, JS and Go files, builds a dependency graph in SQLite. Incremental: re-running only updates changed files (~100–200 ms). If embeddings are configured, automatically indexes new symbols.
 - **`claudeSearch.php`** — CLI interface. Automatically calls `buildGraph.php` before any `graph` or `similar` query.
+- **`embed.php`** — vector embedding providers for semantic search (`similar`). Supports Voyage AI, OpenAI and Ollama. Only loaded when `CS_EMBED_PROVIDER` is set in `config.php`.
 
 ---
 
@@ -46,6 +47,16 @@ The SQLite graph is stored in the project's `code_graph.sqlite` (configured in `
 ### 1. Place the folder
 
 Put the entire `claudeSearch/` folder anywhere inside your project (or alongside it at the same level).
+
+There are two ways to continue:
+
+**Option A — ask an AI agent.** If you already have an AI assistant set up (Claude Code, Cursor, etc.), tell it:
+
+> Install claudeSearch: the folder is already in the project. Configure `config.php` for this repository's structure (directory paths, database name, file extensions) and add `claudeSearch/code_graph.sqlite` to `.gitignore`.
+
+The agent will inspect the project structure and fill in all settings on its own.
+
+**Option B — manually.** Follow steps 2–7 below.
 
 ### 2. Edit `config.php`
 
