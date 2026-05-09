@@ -18,11 +18,13 @@ $isFull  = in_array('--full', $argv);
 require_once __DIR__ . '/parsers/php.php';
 require_once __DIR__ . '/parsers/js.php';
 require_once __DIR__ . '/parsers/go.php';
+require_once __DIR__ . '/parsers/astro.php';
 
 $parsers = [
-    'php' => 'parsePhp',
-    'js'  => 'parseJs',
-    'go'  => 'parseGo',
+    'php'   => 'parsePhp',
+    'js'    => 'parseJs',
+    'go'    => 'parseGo',
+    'astro' => 'parseAstro',
 ];
 
 
@@ -123,7 +125,8 @@ foreach ($scanDirs as $lang => $dirs) {
         $iter = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($dir));
 
         foreach ($iter as $file) {
-            if ($file->getExtension() !== $lang) continue;
+            $allowedExts = $scanExts[$lang] ?? [$lang];
+            if (!in_array($file->getExtension(), $allowedExts)) continue;
 
             $absPath = realpath($file->getPathname()) ?: $file->getPathname();
             $rel     = relPath($absPath, $rootDir);

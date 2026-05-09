@@ -200,8 +200,8 @@ if ($action === 'outline') {
             "/(?:const|let|var)\s+([a-zA-Z_\$][a-zA-Z0-9_\$]*)\s*=\s*(?:async\s+)?(?:function|\()/",
             // class arrow property: foo = () => / foo = async () =>
             "/^\s*([a-zA-Z_\$][a-zA-Z0-9_\$]*)\s*=\s*(?:async\s+)?\(/",
-            // function foo(
-            "/^\s*(?:async\s+)?function\s+([a-zA-Z_\$][a-zA-Z0-9_\$]*)\s*\(/",
+            // function foo( / export function foo( / export default function foo(
+            "/^\s*(?:export\s+(?:default\s+)?)?(?:async\s+)?function\s+([a-zA-Z_\$][a-zA-Z0-9_\$]*)\s*\(/",
         ]);
 
     $seen = []; // не дублировать одну строку

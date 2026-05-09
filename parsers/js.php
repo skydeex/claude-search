@@ -35,6 +35,13 @@ function parseJs(PDO $db, int $fileId, string $content, string $relPath): void {
                 insertRef($db, $fileId, $currentClass, $m[2], 'extends', $lineNum);
         }
 
+        // export function / export default function (TypeScript/ES modules)
+        if (preg_match('/^export\s+(?:default\s+)?(?:async\s+)?function\s+([a-zA-Z_$][a-zA-Z0-9_$]*)\s*\(/', $line, $m)) {
+            $currentMethod = $m[1];
+            $fullName      = $currentClass ? "{$currentClass}::{$m[1]}" : $m[1];
+            insertSymbol($db, $fileId, 'function', $m[1], $fullName, $lineNum);
+        }
+
         // function / method definition
         // async foo() { / foo() { / foo = () => / const foo = () =>
         if (preg_match('/(?:async\s+)?(?:function\s+)?([a-zA-Z_$][a-zA-Z0-9_$]*)\s*[=:]?\s*(?:async\s+)?(?:function\s*)?\(/', $line, $m)) {

@@ -15,7 +15,7 @@ Instead of reading a 500-line file, the assistant asks one targeted query and ge
 
 ## How it works
 
-- **`buildGraph.php`** — parses PHP, JS and Go files, builds a dependency graph in SQLite. Incremental: re-running only updates changed files (~100–200 ms). If embeddings are configured, automatically indexes new symbols.
+- **`buildGraph.php`** — parses PHP, JS/TS, Go and Astro files, builds a dependency graph in SQLite. Incremental: re-running only updates changed files (~100–200 ms). If embeddings are configured, automatically indexes new symbols.
 - **`claudeSearch.php`** — CLI interface. Automatically calls `buildGraph.php` before any `graph` or `similar` query.
 - **`embed.php`** — vector embedding providers for semantic search (`similar`). Supports Voyage AI, OpenAI and Ollama. Only loaded when `CS_EMBED_PROVIDER` is set in `config.php`.
 
@@ -34,8 +34,9 @@ claudeSearch/
   code_graph.sqlite     — SQLite graph (auto-generated, add to .gitignore)
   parsers/
     php.php             — PHP parser (classes, methods, calls, use)
-    js.php              — JS/JSX parser (import, components, functions)
+    js.php              — JS/JSX/TS/TSX parser (import, components, functions, export function)
     go.php              — Go parser (structs, interfaces, funcs, receivers, imports)
+    astro.php           — Astro parser (TypeScript frontmatter + JSX template)
 ```
 
 The SQLite graph is stored in the project's `code_graph.sqlite` (configured in `config.php`).
@@ -100,12 +101,25 @@ The `claudeSearch/` directory must be writable.
 
 The default `realpath(__DIR__ . '/../')` points to the **parent** of the `claudeSearch/` folder. Adjust `/../` if your folder is placed differently.
 
-### 4. Add a new language
+### 4. Add a new language / enable TypeScript or Astro
 
 Go support is already built in (`parsers/go.php`). To enable it in `config.php`:
 ```php
 $scanDirs['go'] = [$rootDir . 'cmd', $rootDir . 'internal'];
 $extensions[]   = 'go';
+```
+
+**TypeScript / Astro projects** — use `$scanExts` to map multiple file extensions to one parser:
+```php
+$scanDirs = [
+    'js'    => [$rootDir . 'src'],   // JS parser handles TS/TSX too
+    'astro' => [$rootDir . 'src'],   // Astro parser for .astro files
+];
+$scanExts = [
+    'js'    => ['ts', 'tsx', 'js', 'jsx'],
+    'astro' => ['astro'],
+];
+$extensions = ['ts', 'tsx', 'astro', 'css'];  // for text search
 ```
 
 To add another language (e.g. Python), create `parsers/python.php` with a `parsePython()` function, then in `buildGraph.php`:
@@ -193,9 +207,11 @@ php claudeSearch/buildGraph.php --full   # full rebuild
 
 **PHP:** classes, interfaces, methods, `new ClassName`, `ClassName::method`, `->method()`, `use`
 
-**JS/JSX:** `import`, classes, functions (all declaration styles), `<Component`, function calls
+**JS/JSX/TS/TSX:** `import`, classes, functions (all declaration styles including `export function`), `<Component`, function calls
 
 **Go:** `type X struct`, `type X interface`, `func (r *T) Method(` → `T::Method`, top-level `func`, method/function calls, `&Type{}` instantiation, `import`
+
+**Astro:** TypeScript frontmatter (between `---`) is parsed as JS/TS — imports, functions, constants; `<Component>` references in the template are indexed as jsx refs. Enable via `$scanExts = ['astro' => ['astro']]` in `config.php`.
 
 ---
 
