@@ -1,0 +1,23 @@
+{
+  "name": "sf-agent-search",
+  "version": "1.0.0",
+  "description": "Salesforce codebase navigation MCP server — parses Apex and metadata into SQLite",
+  "type": "module",
+  "main": "src/index.js",
+  "bin": {
+    "sf-build": "src/build.js"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "build": "node src/build.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "better-sqlite3": "^11.0.0",
+    "fast-xml-parser": "^4.5.0",
+    "zod": "^3.23.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

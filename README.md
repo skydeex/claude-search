@@ -1,371 +1,120 @@
-# claudeSearch — codebase navigation tool for AI assistants
+# sf-agent-search
 
-🇷🇺 [Читать на русском](README.ru.md)
+Node.js MCP server that indexes a Salesforce SFDX project into SQLite and exposes it to AI assistants (Claude, Cursor, etc.) via the Model Context Protocol.
 
-A set of PHP scripts that give an AI assistant (Claude, Cursor, etc.) precise, low-token access to a large codebase — **without reading entire files**.
+## What it indexes
 
-Three complementary search modes:
-- **Structural** — dependency graph in SQLite: who calls what, inheritance chains, all methods of a class, files where a symbol appears. Answers in < 10 ms.
-- **Textual** — grep-style search across project files on the fly: method usages, SQL queries to a table, raw text, routes.
-- **Semantic** — vector similarity search via embeddings (Voyage AI / OpenAI / Ollama): find code by meaning when you don't know the exact name.
+**Apex classes & triggers**
+- Class/interface/enum/trigger declarations with visibility, modifiers, annotations
+- Methods: name, visibility, static/abstract/virtual/override, return type, parameters, annotations, line number
+- Properties/fields: name, type, visibility, static, annotations
+- Dependencies: instantiations (`new X()`), static references (`X.method()`), SOQL objects (`FROM X`), DML targets
 
-Instead of reading a 500-line file, the assistant asks one targeted query and gets back 5–20 lines of relevant output. Context window stays free for actual task logic.
+**Salesforce objects (SFDX format)**
+- Object metadata: API name, label, plural label, description
+- Fields: API name, label, type, required, unique, external ID, description
+- Lookup/MasterDetail relationships: reference target, relationship name
+- Picklist values: value, label, default, active
+- Validation rules: formula, error message, active status
 
-> **If you are an AI assistant** — read **[claudeSearch.md](claudeSearch.md)**. It contains the workflow, file-reading rules and all commands.
-
-## How it works
-
-- **`buildGraph.php`** — parses PHP, JS/TS, Go and Astro files, builds a dependency graph in SQLite. Incremental: re-running only updates changed files (~100–200 ms). If embeddings are configured, automatically indexes new symbols.
-- **`claudeSearch.php`** — CLI interface. Automatically calls `buildGraph.php` before any `graph` or `similar` query.
-- **`embed.php`** — vector embedding providers for semantic search (`similar`). Supports Voyage AI, OpenAI and Ollama. Only loaded when `CS_EMBED_PROVIDER` is set in `config.php`.
-
----
-
-## File structure
+## Project structure expected
 
 ```
-claudeSearch/
-  config.php            — all configuration (edit this to set up a new project)
-  buildGraph.php        — orchestrator: DB, helpers, file scanning, embeddings indexing
-  claudeSearch.php      — CLI interface for all commands
-  embed.php             — embedding providers (voyage, openai, ollama)
-  claudeSearch.md       — AI assistant guide (workflow, rules, commands)
-  cs.sh                 — bash wrapper for convenient invocation
-  code_graph.sqlite     — SQLite graph (auto-generated, add to .gitignore)
-  parsers/
-    php.php             — PHP parser (classes, methods, calls, use)
-    js.php              — JS/JSX/TS/TSX parser (import, components, functions, export function)
-    go.php              — Go parser (structs, interfaces, funcs, receivers, imports)
-    astro.php           — Astro parser (TypeScript frontmatter + JSX template)
+<projectRoot>/
+  sfdx-project.json          <- optional, used to discover packageDirectories
+  force-app/
+    main/
+      default/
+        classes/
+          MyClass.cls
+        triggers/
+          MyTrigger.trigger
+        objects/
+          MyObject__c/
+            MyObject__c.object-meta.xml
+            fields/
+              Field__c.field-meta.xml
+            validationRules/
+              RuleName.validationRule-meta.xml
 ```
-
-The SQLite graph is stored in the project's `code_graph.sqlite` (configured in `config.php`).
-
----
 
 ## Setup
 
-### 1. Place the folder
-
-Put the entire `claudeSearch/` folder anywhere inside your project (or alongside it at the same level).
-
-There are two ways to continue:
-
-**Option A — ask an AI agent.** If you already have an AI assistant set up (Claude Code, Cursor, etc.), tell it:
-
-> Install claudeSearch: the folder is already in the project. Configure `config.php` for this repository's structure (directory paths, database name, file extensions) and add `claudeSearch/code_graph.sqlite` to `.gitignore`.
-
-The agent will inspect the project structure and fill in all settings on its own.
-
-**Option B — manually.** Follow steps 2–7 below.
-
-### 2. Edit `config.php`
-
-This is the **only file you need to edit**:
-
-```php
-// Project root relative to this file
-$rootDir = realpath(__DIR__ . '/../') . DIRECTORY_SEPARATOR;
-
-// MySQL (for schema and db commands)
-define('CS_DB_HOST', 'localhost');
-define('CS_DB_NAME', 'your_database');
-define('CS_DB_USER', 'claude_ro');
-define('CS_DB_PASS', '');
-
-// SQLite graph path
-$dbPath = $rootDir . 'claudeSearch/code_graph.sqlite';
-
-// Directories for graph indexing (buildGraph.php)
-$scanDirs = [
-    'php' => [$rootDir . 'src', $rootDir . 'app'],
-    'js'  => [$rootDir . 'resources/js'],
-];
-
-// Directories for SQL search (sql command)
-$sqlDirs = [$rootDir . 'src/models', $rootDir . 'src/services'];
-
-// Directories for text search (usages, class, raw, ...)
-$searchDirs = [$rootDir . 'src', $rootDir . 'resources/js', $rootDir . 'templates'];
-
-// File extensions to search
-$extensions = ['php', 'js', 'tpl', 'scss', 'css'];
-
-// Router file (route command)
-$routeFile = $rootDir . 'routes/web.php';
-```
-
-The `claudeSearch/` directory must be writable.
-
-### 3. Adjust `$rootDir` if needed
-
-The default `realpath(__DIR__ . '/../')` points to the **parent** of the `claudeSearch/` folder. Adjust `/../` if your folder is placed differently.
-
-### 4. Add a new language / enable TypeScript or Astro
-
-Go support is already built in (`parsers/go.php`). To enable it in `config.php`:
-```php
-$scanDirs['go'] = [$rootDir . 'cmd', $rootDir . 'internal'];
-$extensions[]   = 'go';
-```
-
-**TypeScript / Astro projects** — use `$scanExts` to map multiple file extensions to one parser:
-```php
-$scanDirs = [
-    'js'    => [$rootDir . 'src'],   // JS parser handles TS/TSX too
-    'astro' => [$rootDir . 'src'],   // Astro parser for .astro files
-];
-$scanExts = [
-    'js'    => ['ts', 'tsx', 'js', 'jsx'],
-    'astro' => ['astro'],
-];
-$extensions = ['ts', 'tsx', 'astro', 'css'];  // for text search
-```
-
-To add another language (e.g. Python), create `parsers/python.php` with a `parsePython()` function, then in `buildGraph.php`:
-```php
-require_once __DIR__ . '/parsers/python.php';
-$parsers['py'] = 'parsePython';
-```
-And in `config.php` add scan directories and extension.
-
-### 5. PHP in PATH
-
-**Linux/Mac:** PHP is usually already in PATH.
-
-**Windows (Git Bash):** add to `~/.bash_profile`:
 ```bash
-export PATH="$PATH:/c/php/PHP_8.x"
+npm install
 ```
 
-### 6. Read-only MySQL user (for `schema` and `db`)
-
-```sql
-CREATE USER 'claude_ro'@'localhost' IDENTIFIED BY '';
-GRANT SELECT ON your_database.* TO 'claude_ro'@'localhost';
-```
-
-### 7. Add to `.gitignore`
-
-```
-claudeSearch/code_graph.sqlite
-```
-
----
-
-## All commands
+## Build the index
 
 ```bash
-# Search across project files (read on the fly)
-bash cs.sh usages    MethodName               # where a method/function is called
-bash cs.sh class     ClassName                # where a class is defined and used
-bash cs.sh extends   ClassName                # subclasses
-bash cs.sh implements InterfaceName           # implementations
-bash cs.sh import    ComponentName            # JS imports of a component
-bash cs.sh raw       "any text"               # raw text search
+# Incremental (only processes changed files)
+node src/build.js /path/to/sf-project
 
-# Work with a specific file
-bash cs.sh outline   path/to/File.php         # all methods with line numbers
-bash cs.sh outline   path/to/File.go          # all funcs/methods with line numbers (Go)
-bash cs.sh outline   path/to/File.scss        # all top-level selectors
-bash cs.sh method    path/to/File.php foo     # code of method foo (PHP)
-bash cs.sh method    path/to/File.go  Foo     # code of func/method Foo (Go)
-bash cs.sh block     path/to/File.js  bar     # code of function/component bar (JS)
-bash cs.sh scss      path/to/File.scss .foo   # CSS selector block (including nested)
-bash cs.sh entity    path/to/Entity.php       # class fields and constructor
-bash cs.sh context   path/to/File.php 167 5   # ±5 lines around line 167
+# With custom DB path
+node src/build.js /path/to/sf-project --db=./my_project.sqlite
 
-# DB and routes
-bash cs.sh route     methodName               # find URL route by controller method name
-bash cs.sh sql       table_name               # all SQL queries to a table (multiline too)
-bash cs.sh schema    table_name               # DESCRIBE table from MySQL
-bash cs.sh db        "SELECT * FROM t LIMIT 5" # SELECT via read-only user
+# Full rebuild
+node src/build.js /path/to/sf-project --force
 
-# Dependency graph (SQLite, instant, auto-updated)
-bash cs.sh graph usages  MethodName                    # where it is called/imported
-bash cs.sh graph methods ClassName                     # all methods and symbols of a class
-bash cs.sh graph callers ClassName::method             # who calls a method
-bash cs.sh graph deps    ClassName                     # what the class uses (outgoing refs)
-bash cs.sh graph chain   ClassName                     # extends/implements chain
-bash cs.sh graph files   SymbolName                    # all files where symbol appears
-
-# Semantic search (requires CS_EMBED_PROVIDER in config.php)
-bash cs.sh similar "calculate tax 7%"                 # search by meaning (text query)
-bash cs.sh similar ClassName::methodName              # find symbols similar to a method
+# Verbose output
+node src/build.js /path/to/sf-project -v
 ```
 
-### Running buildGraph.php directly
+Environment variables: `SF_PROJECT`, `SF_DB`
+
+## MCP server
 
 ```bash
-php claudeSearch/buildGraph.php          # incremental (changed files only)
-php claudeSearch/buildGraph.php --full   # full rebuild
+SF_DB=./sf_index.sqlite node src/index.js
 ```
 
----
+### Claude Code / claude_desktop_config.json
 
-## What the graph parses
+```json
+{
+  "mcpServers": {
+    "sf-agent-search": {
+      "command": "node",
+      "args": ["/path/to/sf-agent-search/src/index.js"],
+      "env": {
+        "SF_DB": "/path/to/sf_index.sqlite"
+      }
+    }
+  }
+}
+```
 
-**PHP:** classes, interfaces, methods, `new ClassName`, `ClassName::method`, `->method()`, `use`
+## Available MCP tools
 
-**JS/JSX/TS/TSX:** `import`, classes, functions (all declaration styles including `export function`), `<Component`, function calls
+| Tool | Description |
+|------|-------------|
+| `build_index` | Build or incrementally update the SQLite index from an SF project |
+| `get_index_stats` | Show counts of indexed classes, fields, objects, etc. |
+| `list_apex_classes` | List all Apex classes/triggers, filter by type or annotation |
+| `get_apex_class` | Full details for a class: methods, properties, dependencies |
+| `find_apex_usages` | Find classes that reference a given class or type |
+| `get_class_hierarchy` | Show extends/implements chain and subclasses |
+| `find_by_annotation` | Find classes/methods with a specific annotation (e.g. `@AuraEnabled`) |
+| `search_apex` | Partial-name search across classes and methods |
+| `list_sf_objects` | List all indexed SF objects with field counts |
+| `get_sf_object` | Full object details: fields, relationships, validation rules, picklists |
+| `get_object_fields` | List fields for an object, optionally filtered by type |
+| `find_object_relationships` | Show all Lookup/MasterDetail relationships in the project |
 
-**Go:** `type X struct`, `type X interface`, `func (r *T) Method(` → `T::Method`, top-level `func`, method/function calls, `&Type{}` instantiation, `import`
+## Incremental updates
 
-**Astro:** TypeScript frontmatter (between `---`) is parsed as JS/TS — imports, functions, constants; `<Component>` references in the template are indexed as jsx refs. Enable via `$scanExts = ['astro' => ['astro']]` in `config.php`.
-
----
+The builder stores each file's `mtime`. On subsequent runs, only files whose modification time has changed are re-parsed. Deleted files are detected and their records removed. Pass `--force` (or `force: true` in `build_index`) for a full rebuild.
 
 ## SQLite schema
 
-```sql
--- Project files
-files       (id, path, mtime, lang)
-
--- Symbols: classes, methods, functions, components
-symbols     (id, file_id, type, name, full_name, line, visibility, is_static)
--- type: class | method | function | property | component
--- full_name: ClassName::methodName
-
--- References: calls, imports, inheritance
-refs        (id, file_id, from_full_name, to_name, ref_type, line)
--- ref_type: call | static_call | instantiate | extends | implements | import | jsx
-
--- Embeddings for semantic search (populated when CS_EMBED_PROVIDER is configured)
-embeddings  (symbol_id, vector)
--- vector: JSON float[] — INSERT only for new symbols, never UPDATE
 ```
-
----
-
-## Recommended workflow for AI assistants
-
-Instead of reading large files in full:
-
-**Encountered a new class:**
-1. `graph files ClassName` → where it is defined and used
-2. `entity path/to/Class.php` → fields and constructor
-3. `graph methods ClassName` → all methods
-
-**Need to find where a method is called:**
-1. `graph usages MethodName` → instant from SQLite (matches exact name and `ClassName::method`)
-
-**Need to read a method/function/selector:**
-1. `outline path/to/File` → list of methods with line numbers (PHP, Go, JS)
-2. `method path/to/File methodName` → method/function body (PHP or Go)
-3. `block path/to/File fnName` → function/component body (JS)
-4. `scss path/to/File.scss .selector` → CSS selector block
-5. `context path/to/File line 3` → ±3 lines (to verify `old_string` before Edit)
-
-**Go-specific:**
-1. `graph methods StructName` → all methods of a struct
-2. `outline path/to/file.go` → all funcs/methods, shown as `Type.Method()`
-3. `method path/to/file.go FuncName` → Go function or method body
-
-**Other common cases:**
-- `graph chain ClassName` — extends/implements chain
-- `route controllerMethod` — find URL route
-- `sql table_name` — all SQL queries to a table
-
-**Rules:**
-- Never read an entire file if only a part is needed
-- `Read` — only when the task involves the whole file
-- Run independent queries in parallel
-- Never invent methods or fields — verify via `entity` or `graph methods`
-
----
-
-## CLAUDE.md setup example
-
-After editing `config.php`, add a `## Working with files` section to `CLAUDE.md`:
-
-```markdown
-## Working with files
-
-**Search tool:** `claudeSearch/claudeSearch.php`
-bash claudeSearch/cs.sh <action> <term>
-
-**Priority actions:**
-
-Encountered a new class:
-1. `graph files ClassName` → where defined and used
-2. `entity path/to/Class.php` → fields and constructor
-3. `graph methods ClassName` → all methods
-
-Need to find where a method is called:
-1. `graph usages MethodName` → instant from SQLite
-
-Need to read a method:
-1. `outline path/to/File` → list of methods with line numbers
-2. `method path/to/File methodName` → method body
+files                 -- indexed files with mtime
+apex_classes          -- class/trigger declarations
+apex_methods          -- methods with signatures and annotations
+apex_properties       -- class-level properties/fields
+apex_deps             -- dependencies between classes
+sf_objects            -- Salesforce object metadata
+sf_fields             -- object fields with types and relationships
+sf_picklist_values    -- picklist field values
+sf_validation_rules   -- validation rule formulas and messages
 ```
-
----
-
-## Efficiency
-
-The core problem when an AI assistant works with a large project is context window exhaustion from reading files. claudeSearch solves this with targeted queries instead of full reads.
-
-### Token savings
-
-| Operation | Without tool | With claudeSearch | Savings |
-|---|---|---|---|
-| Find where a method is called | read all project files (~50–200 KB) | `graph usages Method` → 5–20 lines | **99%** |
-| Read one method | read entire file (300–1000 lines) | `method File.php foo` → 10–40 lines | **95%** |
-| Get class fields | read entire file | `entity File.php` → 10–20 lines | **95%** |
-| List file methods | read entire file | `outline File.php` → 1 line per method | **90%** |
-| Find SQL for a table | read all model/service files | `sql table_name` → matches only | **98%** |
-| DB table structure | search migrations or schema | `schema table_name` → instant | **100%** |
-
-### Impact on quality
-
-**Without the tool:** AI fills context reading files → history gets compressed → task context is lost → more errors and hallucinated methods.
-
-**With claudeSearch:** context stays free for task logic. AI sees only the relevant fragments and works more accurately throughout long sessions.
-
-### Graph performance
-
-- Incremental update: **100–200 ms** (changed files only)
-- Full rebuild of ~500 files: **3–8 sec**
-- SQLite query (`graph usages`, `graph methods`): **< 10 ms**
-
----
-
-## Roadmap
-
-Each language is a separate file in `parsers/` — adding one does not affect existing code.
-
-**C / C++** (`parsers/c.php`) — `struct`, `enum`, function declarations, `.h`/`.hpp`, `#include`
-
-**Python** (`parsers/python.php`) — `class`, `def`, decorators, `import`
-
-### Enabling semantic search (`similar`)
-
-Uncomment in `config.php`:
-```php
-// Voyage AI (best for code):
-define('CS_EMBED_PROVIDER', 'voyage');
-define('CS_EMBED_KEY',      'pa-...');
-
-// OpenAI:
-define('CS_EMBED_PROVIDER', 'openai');
-define('CS_EMBED_KEY',      'sk-...');
-
-// Ollama (local, no key required):
-define('CS_EMBED_PROVIDER', 'ollama');
-// define('CS_OLLAMA_MODEL', 'nomic-embed-text');
-```
-
-After configuring, run `php buildGraph.php` — new symbols will be indexed automatically.
-
----
-
-## Notes
-
-> Sorry for PHP — it was just the nearest tool at hand 🙂
-
-- `db` action — SELECT only. Other queries are blocked at the code level.
-- `method`/`block` — finds the block by `{}` balance, correctly ignores `style={{}}` and JSX attributes.
-- `graph` and `similar` automatically run `buildGraph.php` incrementally before each query.
-- On Windows `2>/dev/null` does not work — the script automatically substitutes `NUL`.
-- Requires PHP with `pdo_sqlite` and `pdo_mysql` extensions.
-- `similar` additionally requires the `curl` extension and `CS_EMBED_PROVIDER` configured in `config.php`.
