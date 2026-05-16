@@ -6,7 +6,7 @@ import {
   loadAllMtimes, upsertFile, deleteFileByPath, getAllFilePaths,
   insertApexClass, upsertSfObject, insertSfField, deleteFieldsByFileId,
   insertValidationRule, deleteValidationRulesByFileId,
-  ensureSfObject, getFileId,
+  ensureSfObject, getFileId, saveProjectRoot,
 } from './db.js';
 
 // ── File scanner ───────────────────────────────────────────────────────────
@@ -118,6 +118,7 @@ export function buildIndex(db, projectRoot, { force = false, verbose = false } =
   });
 
   runBatch();
+  saveProjectRoot(db, projectRoot);
   return stats;
 }
 

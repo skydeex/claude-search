@@ -112,6 +112,8 @@ function createSchema(db) {
       error_condition TEXT
     );
 
+    CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);
+
     -- Name lookups: NOCASE so WHERE name=? COLLATE NOCASE uses the index
     CREATE INDEX IF NOT EXISTS idx_apex_classes_name    ON apex_classes(name COLLATE NOCASE);
     CREATE INDEX IF NOT EXISTS idx_apex_classes_extends ON apex_classes(extends_class COLLATE NOCASE);
@@ -237,6 +239,10 @@ function createStmts(db) {
       VALUES (?, ?, ?, ?, ?, ?, ?)
     `),
     ruleDeleteByFile: db.prepare('DELETE FROM sf_validation_rules WHERE file_id = ?'),
+
+    // settings
+    settingGet: db.prepare('SELECT value FROM settings WHERE key = ?'),
+    settingSet: db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)'),
   };
 }
 
@@ -371,4 +377,14 @@ export function insertValidationRule(db, objectId, fileId, rule) {
 
 export function deleteValidationRulesByFileId(db, fileId) {
   getStmts(db).ruleDeleteByFile.run(fileId);
+}
+
+// ── Settings ───────────────────────────────────────────────────────────────
+
+export function saveProjectRoot(db, root) {
+  getStmts(db).settingSet.run('project_root', root);
+}
+
+export function getProjectRoot(db) {
+  return getStmts(db).settingGet.get('project_root')?.value ?? '';
 }

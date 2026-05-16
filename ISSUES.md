@@ -4,6 +4,16 @@ Issues found during code review. Sorted by priority within each section.
 
 ---
 
+## ✅ Исправлено (v1.3 — context economy)
+
+| # | Описание |
+|---|----------|
+| C1 | Относительные пути в выдаче: `settings` таблица хранит `project_root`, все tools выводят `path.relative(root, abs)` |
+| C2 | Лимиты: параметр `limit` (default 100) + `LIMIT ?` в SQL для `list_apex_classes`, `search_apex`, `find_apex_usages`, `find_object_relationships` |
+| C5 | `list_apex_classes`: `lines.join('\n\n')` → `lines.join('\n')` |
+
+---
+
 ## ✅ Исправлено (v1.2 — performance)
 
 | # | Описание |

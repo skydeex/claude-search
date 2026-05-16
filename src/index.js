@@ -3,7 +3,7 @@ import path from 'path';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
-import { openDb } from './db.js';
+import { openDb, getProjectRoot } from './db.js';
 import { buildIndex } from './builder.js';
 
 // DB path from env (can be overridden per tool call)
@@ -71,9 +71,11 @@ server.tool(
     db_path:    z.string().optional().describe('Path to SQLite db'),
     type:       z.enum(['class','interface','enum','trigger']).optional().describe('Filter by type'),
     annotation: z.string().optional().describe('Filter classes that have this annotation (e.g. AuraEnabled, RestResource)'),
+    limit:      z.number().optional().default(100).describe('Max rows to return (default 100)'),
   },
-  async ({ db_path, type, annotation }) => {
-    const db = getDb(db_path ?? DEFAULT_DB);
+  async ({ db_path, type, annotation, limit }) => {
+    const db   = getDb(db_path ?? DEFAULT_DB);
+    const root = getProjectRoot(db);
     let sql  = `
       SELECT ac.name, ac.type, ac.visibility, ac.extends_class, ac.implements_interfaces,
              ac.annotations, f.path
@@ -85,17 +87,18 @@ server.tool(
     if (type) { where.push('ac.type = ?'); params.push(type); }
     if (annotation) { where.push("ac.annotations LIKE ?"); params.push(`%${annotation}%`); }
     if (where.length) sql += ' WHERE ' + where.join(' AND ');
-    sql += ' ORDER BY ac.name';
+    sql += ' ORDER BY ac.name LIMIT ?';
+    params.push(limit);
 
     const rows = db.prepare(sql).all(...params);
     const lines = rows.map(r => {
       const ext  = r.extends_class ? ` extends ${r.extends_class}` : '';
       const impl = r.implements_interfaces ? ` implements ${JSON.parse(r.implements_interfaces).join(', ')}` : '';
       const ann  = r.annotations ? JSON.parse(r.annotations).join(' ') : '';
-      return `${ann ? ann + '\n' : ''}${r.visibility ?? ''} ${r.type} ${r.name}${ext}${impl}  [${r.path}]`.trim();
+      return `${ann ? ann + '\n' : ''}${r.visibility ?? ''} ${r.type} ${r.name}${ext}${impl}  [${relPath(r.path, root)}]`.trim();
     });
 
-    return { content: [{ type: 'text', text: lines.join('\n\n') || '(none found)' }] };
+    return { content: [{ type: 'text', text: lines.join('\n') || '(none found)' }] };
   }
 );
 
@@ -118,6 +121,7 @@ server.tool(
 
     if (!cls) return { content: [{ type: 'text', text: `Class "${class_name}" not found.` }] };
 
+    const root = getProjectRoot(db);
     const methods = db.prepare(`
       SELECT name, visibility, is_static, is_abstract, is_virtual, is_override,
              return_type, params, annotations, line
@@ -134,7 +138,7 @@ server.tool(
     `).all(cls.id);
 
     const lines = [
-      `// File: ${cls.path}`,
+      `// File: ${relPath(cls.path, root)}`,
       formatClassDecl(cls),
       '',
     ];
@@ -185,10 +189,12 @@ server.tool(
     name:     z.string().describe('Class or type name to search for'),
     dep_type: z.enum(['instantiates', 'references', 'soql', 'extends', 'implements']).optional()
                .describe('Filter by dependency type'),
+    limit:    z.number().optional().default(100).describe('Max rows to return (default 100)'),
     db_path:  z.string().optional(),
   },
-  async ({ name, dep_type, db_path }) => {
+  async ({ name, dep_type, limit, db_path }) => {
     const db   = getDb(db_path ?? DEFAULT_DB);
+    const root = getProjectRoot(db);
     const rows = [];
 
     // FIX 1: extends and implements are stored in apex_classes, not apex_deps
@@ -228,8 +234,10 @@ server.tool(
     if (!rows.length) return { content: [{ type: 'text', text: `No usages of "${name}" found.` }] };
 
     rows.sort((a, b) => a.class_name.localeCompare(b.class_name));
-    const lines = rows.map(r => `${r.class_type} ${r.class_name}  [${r.dep_type}]  ${r.path}`);
-    return { content: [{ type: 'text', text: `Usages of "${name}":\n` + lines.join('\n') }] };
+    const limited = rows.slice(0, limit);
+    const lines = limited.map(r => `${r.class_type} ${r.class_name}  [${r.dep_type}]  ${relPath(r.path, root)}`);
+    const suffix = rows.length > limit ? `\n(showing ${limit} of ${rows.length})` : '';
+    return { content: [{ type: 'text', text: `Usages of "${name}":\n` + lines.join('\n') + suffix }] };
   }
 );
 
@@ -291,6 +299,7 @@ server.tool(
   },
   async ({ annotation, target, db_path }) => {
     const db     = getDb(db_path ?? DEFAULT_DB);
+    const root   = getProjectRoot(db);
     const like   = `%${annotation}%`;
     const lines  = [];
 
@@ -302,7 +311,7 @@ server.tool(
       `).all(like);
       if (rows.length) {
         lines.push(`Classes with @${annotation}:`);
-        rows.forEach(r => lines.push(`  ${r.type} ${r.name}  [${r.path}]`));
+        rows.forEach(r => lines.push(`  ${r.type} ${r.name}  [${relPath(r.path, root)}]`));
       }
     }
 
@@ -319,7 +328,7 @@ server.tool(
         if (lines.length) lines.push('');
         lines.push(`Methods with @${annotation}:`);
         rows.forEach(r => lines.push(
-          `  ${r.class_name}.${r.method_name}  (${r.visibility ?? ''}${r.is_static ? ' static' : ''} ${r.return_type ?? 'void'})  line:${r.line}  [${r.path}]`
+          `  ${r.class_name}.${r.method_name}  (${r.visibility ?? ''}${r.is_static ? ' static' : ''} ${r.return_type ?? 'void'})  line:${r.line}  [${relPath(r.path, root)}]`
         ));
       }
     }
@@ -473,9 +482,10 @@ server.tool(
   'Show all Lookup and MasterDetail relationships in the project — which objects relate to which.',
   {
     object_name: z.string().optional().describe('Filter to relationships involving this object (as source or target)'),
+    limit:       z.number().optional().default(100).describe('Max rows to return (default 100)'),
     db_path:     z.string().optional(),
   },
-  async ({ object_name, db_path }) => {
+  async ({ object_name, limit, db_path }) => {
     const db = getDb(db_path ?? DEFAULT_DB);
     let sql  = `
       SELECT o.api_name AS from_object, f.api_name AS field_name,
@@ -489,7 +499,8 @@ server.tool(
       sql += ' AND (o.api_name = ? COLLATE NOCASE OR f.reference_to = ? COLLATE NOCASE)';
       prms.push(object_name, object_name);
     }
-    sql += ' ORDER BY o.api_name, f.api_name';
+    sql += ' ORDER BY o.api_name, f.api_name LIMIT ?';
+    prms.push(limit);
 
     const rows  = db.prepare(sql).all(...prms);
     const lines = rows.map(r =>
@@ -507,17 +518,19 @@ server.tool(
   'Search for Apex classes or methods by name (partial match).',
   {
     query:   z.string().describe('Search term (partial class or method name)'),
+    limit:   z.number().optional().default(100).describe('Max rows per category (default 100)'),
     db_path: z.string().optional(),
   },
-  async ({ query, db_path }) => {
+  async ({ query, limit, db_path }) => {
     const db   = getDb(db_path ?? DEFAULT_DB);
+    const root = getProjectRoot(db);
     const like = `%${query}%`;
 
     const classes = db.prepare(`
       SELECT ac.name, ac.type, ac.visibility, f.path
       FROM apex_classes ac JOIN files f ON f.id = ac.file_id
-      WHERE ac.name LIKE ? COLLATE NOCASE ORDER BY ac.name
-    `).all(like);
+      WHERE ac.name LIKE ? COLLATE NOCASE ORDER BY ac.name LIMIT ?
+    `).all(like, limit);
 
     const methods = db.prepare(`
       SELECT am.name, am.visibility, am.return_type, am.line,
@@ -525,19 +538,19 @@ server.tool(
       FROM apex_methods am
       JOIN apex_classes ac ON ac.id = am.class_id
       JOIN files f ON f.id = ac.file_id
-      WHERE am.name LIKE ? COLLATE NOCASE ORDER BY ac.name, am.name
-    `).all(like);
+      WHERE am.name LIKE ? COLLATE NOCASE ORDER BY ac.name, am.name LIMIT ?
+    `).all(like, limit);
 
     const lines = [];
     if (classes.length) {
       lines.push(`Classes matching "${query}":`);
-      classes.forEach(c => lines.push(`  ${c.type} ${c.name}  [${c.path}]`));
+      classes.forEach(c => lines.push(`  ${c.type} ${c.name}  [${relPath(c.path, root)}]`));
     }
     if (methods.length) {
       if (lines.length) lines.push('');
       lines.push(`Methods matching "${query}":`);
       methods.forEach(m => lines.push(
-        `  ${m.class_name}.${m.name}  (${m.visibility ?? ''} ${m.return_type ?? 'void'})  line:${m.line}  [${m.path}]`
+        `  ${m.class_name}.${m.name}  (${m.visibility ?? ''} ${m.return_type ?? 'void'})  line:${m.line}  [${relPath(m.path, root)}]`
       ));
     }
 
@@ -573,6 +586,12 @@ server.tool(
 );
 
 // ── Helpers ────────────────────────────────────────────────────────────────
+
+function relPath(absPath, root) {
+  if (!root || !absPath) return absPath;
+  const rel = path.relative(root, absPath);
+  return rel.startsWith('..') ? absPath : rel;
+}
 
 function formatClassDecl(cls) {
   // FIX 2: show trigger object and events for triggers
