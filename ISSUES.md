@@ -4,39 +4,22 @@ Issues found during code review. Sorted by priority within each section.
 
 ---
 
-## 🟠 Performance
+## ✅ Исправлено (v1.2 — performance)
 
-### P1 — `db.prepare()` вызывается при каждом обращении к функции
-**Файлы:** `src/db.js` — все функции (`fileNeedsUpdate`, `upsertFile`, `insertApexClass`, `insertSfField`, etc.)  
-**Проблема:** `better-sqlite3` не кэширует prepared statements автоматически. При сборке 500 файлов × ~10 prepare = 5 000+ лишних компиляций SQL.  
-**Решение:** Вынести statements в module-level объект (один раз per DB connection), использовать паттерн `db._stmts ??= { ... }`.
+| # | Описание |
+|---|----------|
+| P1 | Cached prepared statements через `getStmts(db)` + `db._sfStmts ??= createStmts(db)` |
+| P2 | Транзакция на весь build: все INSERT/DELETE в одном `db.transaction()` |
+| P3 | FK индексы: `apex_methods(class_id)`, `apex_properties(class_id)`, `apex_deps(class_id)`, `sf_picklist_values(field_id)`, `sf_validation_rules(object_id)` |
+| P4 | NOCASE индексы: `name`, `extends_class`, `dep_name`, `api_name` — now используются при `COLLATE NOCASE` запросах |
+| P5* | Частично: `idx_apex_deps_dep_name NOCASE` ускоряет `find_apex_usages`. FTS для аннотаций не реализован |
+| P7 | Race condition в getMtime: `try { statSync } catch { return null }`, файл-призрак пропускается |
 
-### P2 — Нет транзакции вокруг всей сборки (мёртвый код)
-**Файл:** `src/builder.js:71`  
-**Проблема:** `processFile = db.transaction(...)` создана, но **никогда не используется**. Каждая вставка — отдельный fsync. Для 500 файлов это 5–10× медленнее, чем нужно.  
-**Решение:** Обернуть весь цикл `buildIndex` в одну транзакцию:
-```javascript
-const runBuild = db.transaction(() => { /* весь цикл */ });
-runBuild();
-```
+*P5 (FTS для аннотаций/поиска) остаётся открытым.
 
-### P3 — Отсутствуют индексы на foreign key колонках
-**Файл:** `src/db.js` — конец `createSchema`  
-**Проблема:** JOIN'ы по `class_id`, `object_id`, `field_id` делают full scan без индексов.  
-**Решение:** Добавить:
-```sql
-CREATE INDEX IF NOT EXISTS idx_apex_methods_class_id    ON apex_methods(class_id);
-CREATE INDEX IF NOT EXISTS idx_apex_properties_class_id ON apex_properties(class_id);
-CREATE INDEX IF NOT EXISTS idx_apex_deps_class_id       ON apex_deps(class_id);
-CREATE INDEX IF NOT EXISTS idx_sf_fields_object_id      ON sf_fields(object_id);
-CREATE INDEX IF NOT EXISTS idx_sf_picklist_field_id     ON sf_picklist_values(field_id);
-CREATE INDEX IF NOT EXISTS idx_sf_valrules_object_id    ON sf_validation_rules(object_id);
-```
+---
 
-### P4 — `COLLATE NOCASE` запросы не используют существующие индексы
-**Файл:** `src/db.js:110` и `src/index.js` повсеместно  
-**Проблема:** `CREATE INDEX idx_apex_classes_name ON apex_classes(name)` — индекс case-sensitive. `WHERE name = ? COLLATE NOCASE` его не использует, делает full scan.  
-**Решение:** Пересоздать как `ON apex_classes(name COLLATE NOCASE)`.
+## 🟠 Performance (остаток)
 
 ### P5 — `LIKE '%query%'` без Full-Text Search
 **Файл:** `src/index.js` — `find_by_annotation`, `search_apex`  
@@ -47,17 +30,6 @@ CREATE INDEX IF NOT EXISTS idx_sf_valrules_object_id    ON sf_validation_rules(o
 **Файл:** `src/builder.js:13`  
 **Проблема:** `readdirSync` — синхронная. При вызове `build_index` через MCP сервер event loop заблокирован на всё время сборки (для большого проекта — секунды).  
 **Решение:** Переписать `walkDir` на async generator с `fs.promises.readdir`.
-
-### P7 — Race condition: файл может удалиться между `walkDir` и `getMtime`
-**Файл:** `src/builder.js:23`  
-**Проблема:** `fs.statSync(filePath)` бросит ENOENT если файл удалили в промежутке между enumerate и stat.  
-**Решение:**
-```javascript
-function getMtime(filePath) {
-  try { return fs.statSync(filePath).mtimeMs; } catch { return null; }
-}
-// и пропускать файл если mtime === null
-```
 
 ---
 

@@ -3,9 +3,10 @@ import path from 'path';
 import { parseApexFile } from './parsers/apex.js';
 import { parseFieldFile, parseObjectFile, parseValidationRuleFile } from './parsers/sfObject.js';
 import {
-  fileNeedsUpdate, upsertFile, deleteFileByPath, getAllFilePaths,
+  loadAllMtimes, upsertFile, deleteFileByPath, getAllFilePaths,
   insertApexClass, upsertSfObject, insertSfField, deleteFieldsByFileId,
   insertValidationRule, deleteValidationRulesByFileId,
+  ensureSfObject, getFileId,
 } from './db.js';
 
 // ── File scanner ───────────────────────────────────────────────────────────
@@ -19,37 +20,35 @@ function* walkDir(dir) {
   }
 }
 
+// P7: wrap in try/catch — file may disappear between walkDir and stat
 function getMtime(filePath) {
-  return fs.statSync(filePath).mtimeMs;
+  try { return fs.statSync(filePath).mtimeMs; } catch { return null; }
 }
 
 // ── Project structure discovery ────────────────────────────────────────────
 
 function findSfdxDirs(projectRoot) {
-  // Support both single-package and multi-package repos
-  // Look for sfdx-project.json to find packageDirectories
   const sfdxJson = path.join(projectRoot, 'sfdx-project.json');
-  let defaultPaths = [path.join(projectRoot, 'force-app', 'main', 'default')];
+  let dirs = [path.join(projectRoot, 'force-app', 'main', 'default')];
 
   if (fs.existsSync(sfdxJson)) {
     try {
       const cfg = JSON.parse(fs.readFileSync(sfdxJson, 'utf8'));
       if (Array.isArray(cfg.packageDirectories)) {
-        defaultPaths = cfg.packageDirectories.map(d =>
+        dirs = cfg.packageDirectories.map(d =>
           path.join(projectRoot, d.path ?? d, 'main', 'default')
         );
       }
     } catch {}
   }
 
-  // Also scan project root directly in case of non-standard layout
-  return defaultPaths.filter(d => fs.existsSync(d));
+  return dirs.filter(d => fs.existsSync(d));
 }
 
 // ── Build orchestrator ─────────────────────────────────────────────────────
 
 export function buildIndex(db, projectRoot, { force = false, verbose = false } = {}) {
-  const log = verbose ? console.error : () => {};
+  const log   = verbose ? console.error : () => {};
   const stats = { added: 0, updated: 0, deleted: 0, skipped: 0, errors: 0 };
 
   if (force) {
@@ -57,86 +56,81 @@ export function buildIndex(db, projectRoot, { force = false, verbose = false } =
     log('[build] Full rebuild — all records cleared.');
   }
 
-  // Collect existing paths for deletion detection
-  const existingPaths = new Set(getAllFilePaths(db));
-  const seenPaths     = new Set();
+  const dirs = findSfdxDirs(projectRoot);
+  if (!dirs.length) dirs.push(projectRoot);
+  log(`[build] Source dirs: ${dirs.join(', ')}`);
 
-  const defaultDirs = findSfdxDirs(projectRoot);
-  if (!defaultDirs.length) {
-    // Fall back to scanning the whole project root
-    defaultDirs.push(projectRoot);
-  }
-  log(`[build] Source dirs: ${defaultDirs.join(', ')}`);
+  // P1: load all known mtimes in one query instead of one query per file
+  const knownMtimes = loadAllMtimes(db);
+  const existingPaths = new Set(Object.keys(knownMtimes));
+  const seenPaths = new Set();
 
-  const processFile = db.transaction((filePath, mtime, handler) => {
-    handler(filePath, mtime);
-  });
+  // ── Collect phase: disk reads only, no DB writes ───────────────────────
+  const toProcess = [];
 
-  for (const baseDir of defaultDirs) {
+  for (const baseDir of dirs) {
     for (const filePath of walkDir(baseDir)) {
       seenPaths.add(filePath);
 
-      const mtime = getMtime(filePath);
-      const ext   = path.extname(filePath).toLowerCase();
-      const base  = path.basename(filePath);
+      const ext  = path.extname(filePath).toLowerCase();
+      const base = path.basename(filePath);
 
       let handler = null;
-
-      if (ext === '.cls') {
-        handler = handleApexFile;
-      } else if (ext === '.trigger') {
-        handler = handleApexFile;
-      } else if (base.endsWith('.field-meta.xml')) {
-        handler = handleFieldFile;
-      } else if (base.endsWith('.object-meta.xml')) {
-        handler = handleObjectFile;
-      } else if (base.endsWith('.validationRule-meta.xml')) {
-        handler = handleValidationRuleFile;
-      }
-
+      if (ext === '.cls' || ext === '.trigger')          handler = handleApexFile;
+      else if (base.endsWith('.field-meta.xml'))          handler = handleFieldFile;
+      else if (base.endsWith('.object-meta.xml'))         handler = handleObjectFile;
+      else if (base.endsWith('.validationRule-meta.xml')) handler = handleValidationRuleFile;
       if (!handler) continue;
 
-      if (!fileNeedsUpdate(db, filePath, mtime)) {
+      // P7: getMtime returns null if file disappeared between walk and stat
+      const mtime = getMtime(filePath);
+      if (mtime === null) continue;
+
+      // P1: O(1) mtime check against in-memory map
+      if (knownMtimes[filePath] === mtime) {
         stats.skipped++;
         continue;
       }
 
+      toProcess.push({ filePath, mtime, handler });
+    }
+  }
+
+  // ── Write phase: all DB mutations in one transaction (P2) ──────────────
+  const runBatch = db.transaction(() => {
+    for (const { filePath, mtime, handler } of toProcess) {
       try {
-        handler(db, filePath, mtime, projectRoot, log);
-        const isNew = !existingPaths.has(filePath);
-        isNew ? stats.added++ : stats.updated++;
+        handler(db, filePath, mtime, log);
+        existingPaths.has(filePath) ? stats.updated++ : stats.added++;
       } catch (err) {
         stats.errors++;
         log(`[error] ${filePath}: ${err.message}`);
       }
     }
-  }
 
-  // Delete records for files that no longer exist
-  for (const p of existingPaths) {
-    if (!seenPaths.has(p)) {
-      deleteFileByPath(db, p);
-      stats.deleted++;
-      log(`[delete] ${p}`);
+    for (const p of existingPaths) {
+      if (!seenPaths.has(p)) {
+        deleteFileByPath(db, p);
+        stats.deleted++;
+        log(`[delete] ${p}`);
+      }
     }
-  }
+  });
 
+  runBatch();
   return stats;
 }
 
 // ── Apex handler ───────────────────────────────────────────────────────────
 
-function handleApexFile(db, filePath, mtime, projectRoot, log) {
-  const ext     = path.extname(filePath).toLowerCase();
-  const type    = ext === '.trigger' ? 'apex_trigger' : 'apex_class';
+function handleApexFile(db, filePath, mtime, log) {
+  const type    = path.extname(filePath).toLowerCase() === '.trigger' ? 'apex_trigger' : 'apex_class';
   const content = fs.readFileSync(filePath, 'utf8');
 
-  // Remove old file record (cascades to apex_classes → methods/props/deps)
   deleteFileByPath(db, filePath);
   const fileId = upsertFile(db, filePath, mtime, type);
 
-  const classes = parseApexFile(content, filePath);
-  for (const cls of classes) {
+  for (const cls of parseApexFile(content, filePath)) {
     insertApexClass(db, fileId, cls);
     log(`[apex] ${cls.type} ${cls.name} — ${cls.methods?.length ?? 0} methods`);
   }
@@ -144,9 +138,8 @@ function handleApexFile(db, filePath, mtime, projectRoot, log) {
 
 // ── Object handler ─────────────────────────────────────────────────────────
 
-function handleObjectFile(db, filePath, mtime, projectRoot, log) {
-  const content = fs.readFileSync(filePath, 'utf8');
-  const obj = parseObjectFile(content, filePath);
+function handleObjectFile(db, filePath, mtime, log) {
+  const obj = parseObjectFile(fs.readFileSync(filePath, 'utf8'), filePath);
   if (!obj) return;
 
   deleteFileByPath(db, filePath);
@@ -157,24 +150,16 @@ function handleObjectFile(db, filePath, mtime, projectRoot, log) {
 
 // ── Field handler ──────────────────────────────────────────────────────────
 
-function handleFieldFile(db, filePath, mtime, projectRoot, log) {
-  const content = fs.readFileSync(filePath, 'utf8');
-  const field = parseFieldFile(content, filePath);
+function handleFieldFile(db, filePath, mtime, log) {
+  const field = parseFieldFile(fs.readFileSync(filePath, 'utf8'), filePath);
   if (!field) return;
 
-  // Derive object API name: objects/<ObjectName>/fields/<Field>.field-meta.xml
+  // objects/<ObjectName>/fields/<Field>.field-meta.xml
   const objectApiName = path.basename(path.dirname(path.dirname(filePath)));
+  const objRow = ensureSfObject(db, objectApiName);
 
-  // Ensure object exists in db (may not have an object-meta.xml yet)
-  let objRow = db.prepare('SELECT id FROM sf_objects WHERE api_name = ?').get(objectApiName);
-  if (!objRow) {
-    db.prepare('INSERT INTO sf_objects (api_name) VALUES (?)').run(objectApiName);
-    objRow = db.prepare('SELECT id FROM sf_objects WHERE api_name = ?').get(objectApiName);
-  }
-
-  // Remove old field record for this file
-  const oldFile = db.prepare('SELECT id FROM files WHERE path = ?').get(filePath);
-  if (oldFile) deleteFieldsByFileId(db, oldFile.id);
+  const oldFileId = getFileId(db, filePath);
+  if (oldFileId) deleteFieldsByFileId(db, oldFileId);
   deleteFileByPath(db, filePath);
 
   const fileId = upsertFile(db, filePath, mtime, 'sf_field');
@@ -184,21 +169,15 @@ function handleFieldFile(db, filePath, mtime, projectRoot, log) {
 
 // ── Validation Rule handler ────────────────────────────────────────────────
 
-function handleValidationRuleFile(db, filePath, mtime, projectRoot, log) {
-  const content = fs.readFileSync(filePath, 'utf8');
-  const rule = parseValidationRuleFile(content, filePath);
+function handleValidationRuleFile(db, filePath, mtime, log) {
+  const rule = parseValidationRuleFile(fs.readFileSync(filePath, 'utf8'), filePath);
   if (!rule) return;
 
   const objectApiName = path.basename(path.dirname(path.dirname(filePath)));
+  const objRow = ensureSfObject(db, objectApiName);
 
-  let objRow = db.prepare('SELECT id FROM sf_objects WHERE api_name = ?').get(objectApiName);
-  if (!objRow) {
-    db.prepare('INSERT INTO sf_objects (api_name) VALUES (?)').run(objectApiName);
-    objRow = db.prepare('SELECT id FROM sf_objects WHERE api_name = ?').get(objectApiName);
-  }
-
-  const oldFile = db.prepare('SELECT id FROM files WHERE path = ?').get(filePath);
-  if (oldFile) deleteValidationRulesByFileId(db, oldFile.id);
+  const oldFileId = getFileId(db, filePath);
+  if (oldFileId) deleteValidationRulesByFileId(db, oldFileId);
   deleteFileByPath(db, filePath);
 
   const fileId = upsertFile(db, filePath, mtime, 'sf_validation_rule');
