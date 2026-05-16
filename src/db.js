@@ -5,7 +5,16 @@ export function openDb(dbPath) {
   db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');
   createSchema(db);
+  applyMigrations(db);
   return db;
+}
+
+function applyMigrations(db) {
+  const cols = db.prepare('PRAGMA table_info(apex_classes)').all().map(c => c.name);
+  if (!cols.includes('trigger_object'))
+    db.exec('ALTER TABLE apex_classes ADD COLUMN trigger_object TEXT');
+  if (!cols.includes('trigger_events'))
+    db.exec('ALTER TABLE apex_classes ADD COLUMN trigger_events TEXT');
 }
 
 function createSchema(db) {
@@ -27,7 +36,9 @@ function createSchema(db) {
       is_virtual              INTEGER DEFAULT 0,
       extends_class           TEXT,
       implements_interfaces   TEXT,
-      annotations             TEXT
+      annotations             TEXT,
+      trigger_object          TEXT,
+      trigger_events          TEXT
     );
 
     CREATE TABLE IF NOT EXISTS apex_methods (
@@ -160,14 +171,17 @@ export function getAllFilePaths(db) {
 export function insertApexClass(db, fileId, cls) {
   const info = db.prepare(`
     INSERT INTO apex_classes
-      (file_id, name, type, visibility, is_abstract, is_virtual, extends_class, implements_interfaces, annotations)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      (file_id, name, type, visibility, is_abstract, is_virtual, extends_class,
+       implements_interfaces, annotations, trigger_object, trigger_events)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     fileId, cls.name, cls.type, cls.visibility ?? null,
     cls.isAbstract ? 1 : 0, cls.isVirtual ? 1 : 0,
     cls.extendsClass ?? null,
     JSON.stringify(cls.implementsInterfaces ?? []),
-    JSON.stringify(cls.annotations ?? [])
+    JSON.stringify(cls.annotations ?? []),
+    cls.triggerObject ?? null,
+    cls.triggerEvents ? cls.triggerEvents.join(', ') : null
   );
   const classId = info.lastInsertRowid;
 

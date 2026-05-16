@@ -38,7 +38,8 @@ export function parseFieldFile(content, filePath) {
       value:     str(v.fullName) ?? str(v.label),
       label:     str(v.label),
       isDefault: bool(v.default),
-      active:    v.isActive !== false,
+      // FIX 7: v.isActive is a string 'true'/'false' from XML, not a JS boolean
+      active:    v.isActive == null ? true : bool(v.isActive),
     }));
   }
   // Also support globalValueSet values inline

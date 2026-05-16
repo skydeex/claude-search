@@ -180,29 +180,54 @@ server.tool(
 
 server.tool(
   'find_apex_usages',
-  'Find all Apex classes that reference (call, instantiate, extend, implement) a given class or type.',
+  'Find all Apex classes that reference (instantiate, call, extend, implement) a given class or type.',
   {
-    name:    z.string().describe('Class or type name to search for'),
-    dep_type: z.enum(['instantiates','references','soql','dml','extends','implements']).optional()
+    name:     z.string().describe('Class or type name to search for'),
+    dep_type: z.enum(['instantiates', 'references', 'soql', 'extends', 'implements']).optional()
                .describe('Filter by dependency type'),
-    db_path: z.string().optional(),
+    db_path:  z.string().optional(),
   },
   async ({ name, dep_type, db_path }) => {
-    const db = getDb(db_path ?? DEFAULT_DB);
-    let sql = `
-      SELECT ac.name AS class_name, ac.type AS class_type, d.dep_type, f.path
-      FROM apex_deps d
-      JOIN apex_classes ac ON ac.id = d.class_id
-      JOIN files f ON f.id = ac.file_id
-      WHERE d.dep_name = ? COLLATE NOCASE
-    `;
-    const params = [name];
-    if (dep_type) { sql += ' AND d.dep_type = ?'; params.push(dep_type); }
-    sql += ' ORDER BY ac.name';
+    const db   = getDb(db_path ?? DEFAULT_DB);
+    const rows = [];
 
-    const rows = db.prepare(sql).all(...params);
+    // FIX 1: extends and implements are stored in apex_classes, not apex_deps
+    if (!dep_type || !['extends', 'implements'].includes(dep_type)) {
+      let sql = `
+        SELECT ac.name AS class_name, ac.type AS class_type, d.dep_type, f.path
+        FROM apex_deps d
+        JOIN apex_classes ac ON ac.id = d.class_id
+        JOIN files f ON f.id = ac.file_id
+        WHERE d.dep_name = ? COLLATE NOCASE
+      `;
+      const params = [name];
+      if (dep_type) { sql += ' AND d.dep_type = ?'; params.push(dep_type); }
+      rows.push(...db.prepare(sql).all(...params));
+    }
+
+    if (!dep_type || dep_type === 'extends') {
+      rows.push(...db.prepare(`
+        SELECT ac.name AS class_name, ac.type AS class_type, 'extends' AS dep_type, f.path
+        FROM apex_classes ac
+        JOIN files f ON f.id = ac.file_id
+        WHERE ac.extends_class = ? COLLATE NOCASE
+      `).all(name));
+    }
+
+    if (!dep_type || dep_type === 'implements') {
+      // FIX 8: use json_each for exact match instead of LIKE '%name%'
+      rows.push(...db.prepare(`
+        SELECT ac.name AS class_name, ac.type AS class_type, 'implements' AS dep_type, f.path
+        FROM apex_classes ac, json_each(ac.implements_interfaces) ji
+        JOIN files f ON f.id = ac.file_id
+        WHERE ji.value = ? COLLATE NOCASE
+          AND ac.implements_interfaces IS NOT NULL
+      `).all(name));
+    }
+
     if (!rows.length) return { content: [{ type: 'text', text: `No usages of "${name}" found.` }] };
 
+    rows.sort((a, b) => a.class_name.localeCompare(b.class_name));
     const lines = rows.map(r => `${r.class_type} ${r.class_name}  [${r.dep_type}]  ${r.path}`);
     return { content: [{ type: 'text', text: `Usages of "${name}":\n` + lines.join('\n') }] };
   }
@@ -237,10 +262,14 @@ server.tool(
       children.forEach(c => lines.push(`    ${c.type} ${c.name}`));
     }
 
-    // Who implements this (as interface)?
-    const implementors = db.prepare(
-      "SELECT name, type FROM apex_classes WHERE implements_interfaces LIKE ? ORDER BY name"
-    ).all(`%${class_name}%`);
+    // FIX 8: use json_each for exact interface match, not LIKE which gives false positives
+    const implementors = db.prepare(`
+      SELECT ac.name, ac.type
+      FROM apex_classes ac, json_each(ac.implements_interfaces) ji
+      WHERE ji.value = ? COLLATE NOCASE
+        AND ac.implements_interfaces IS NOT NULL
+      ORDER BY ac.name
+    `).all(class_name);
     if (implementors.length) {
       lines.push('  implemented by:');
       implementors.forEach(c => lines.push(`    ${c.type} ${c.name}`));
@@ -546,10 +575,16 @@ server.tool(
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 function formatClassDecl(cls) {
-  const anns  = JSON.parse(cls.annotations ?? '[]').join(' ');
+  // FIX 2: show trigger object and events for triggers
+  if (cls.type === 'trigger') {
+    const events = cls.trigger_events ?? '';
+    const obj    = cls.trigger_object ?? '?';
+    return `trigger ${cls.name} on ${obj} (${events})`;
+  }
+  const anns   = JSON.parse(cls.annotations ?? '[]').join(' ');
   const ifaces = JSON.parse(cls.implements_interfaces ?? '[]');
-  const mods  = [cls.visibility, cls.is_abstract ? 'abstract' : null, cls.is_virtual ? 'virtual' : null]
-                .filter(Boolean).join(' ');
+  const mods   = [cls.visibility, cls.is_abstract ? 'abstract' : null, cls.is_virtual ? 'virtual' : null]
+                 .filter(Boolean).join(' ');
   let decl = `${mods} ${cls.type} ${cls.name}`.trim();
   if (cls.extends_class) decl += ` extends ${cls.extends_class}`;
   if (ifaces.length)     decl += ` implements ${ifaces.join(', ')}`;
